@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow } from './types/erp';
@@ -10,9 +10,137 @@ import { FinancialReportPrintModal } from './components/FinancialReportPrintModa
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 
-const getNextInvoiceNumber = (list: SalesInvoice[]) => `INV-${String(list.length + 1).padStart(4, '0')}`;
-const getNextPurchaseNumber = (list: PurchaseInvoice[]) => `PUR-${String(list.length + 1).padStart(4, '0')}`;
-const getNextPaymentNumber = (list: PaymentEntry[]) => `PAY-${String(list.length + 1).padStart(4, '0')}`;
+const GST_SLABS = ['0', '5', '12', '18', '28'];
+
+// Document numbers must continue from the highest existing sequence, not from
+// the row count. Deleting a document leaves a gap, and `length + 1` would then
+// hand out a number that already exists (both are UNIQUE in the database).
+const nextSequenceNumber = (prefix: string, existing: (string | undefined)[]): string => {
+  const highest = existing.reduce((max, value) => {
+    const match = /^([A-Za-z-]*)(\d+)$/.exec(value ?? '');
+    return match ? Math.max(max, parseInt(match[2], 10)) : max;
+  }, 0);
+  return `${prefix}${String(highest + 1).padStart(4, '0')}`;
+};
+
+const getNextInvoiceNumber = (list: SalesInvoice[]) => nextSequenceNumber('INV-', list.map(i => i.invoice_number));
+const getNextPurchaseNumber = (list: PurchaseInvoice[]) => nextSequenceNumber('PUR-', list.map(p => p.bill_number));
+const getNextPaymentNumber = (list: PaymentEntry[]) => nextSequenceNumber('PAY-', list.map(p => p.voucher_no));
+
+// The tax rate is not stored on the invoice, but it is recoverable from the
+// stored amounts. Snap it to the nearest slab so it matches a <select> option.
+const inferTaxRate = (netTotal: number | string, taxAmount: number | string): string => {
+  const net = parseFloat(String(netTotal)) || 0;
+  const tax = parseFloat(String(taxAmount)) || 0;
+  if (net <= 0) return '0';
+  const rate = (tax / net) * 100;
+  return GST_SLABS.reduce((best, slab) =>
+    Math.abs(Number(slab) - rate) < Math.abs(Number(best) - rate) ? slab : best
+  );
+};
+
+interface LineForm {
+  uid: string;
+  item_id: string;
+  quantity: string;
+  rate: string;
+}
+
+let lineCounter = 0;
+
+const newLine = (): LineForm => ({ uid: `l${++lineCounter}`, item_id: '', quantity: '1', rate: '0' });
+
+const lineFromItem = (item: { item: number; quantity: number | string; rate: number | string }): LineForm => ({
+  uid: `l${++lineCounter}`,
+  item_id: String(item.item),
+  quantity: String(item.quantity),
+  rate: String(item.rate)
+});
+
+const fieldStyle: React.CSSProperties = {
+  width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box'
+};
+
+// Defined at module scope on purpose: a component declared inside App() would
+// be a new type on every render, remounting the inputs and dropping focus.
+const LineItemsEditor: React.FC<{
+  lines: LineForm[];
+  items: Item[];
+  showStock: boolean;
+  onChange: (lines: LineForm[]) => void;
+}> = ({ lines, items, showStock, onChange }) => {
+  const update = (idx: number, patch: Partial<LineForm>) =>
+    onChange(lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {lines.map((line, idx) => (
+        <div
+          key={line.uid}
+          style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto', gap: '8px', alignItems: 'end' }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <label style={{ fontSize: '12px', fontWeight: '600' }}>Item *</label>
+            <select
+              required
+              style={fieldStyle}
+              value={line.item_id}
+              onChange={e => {
+                const sel = items.find(i => i.id === parseInt(e.target.value));
+                update(idx, { item_id: e.target.value, rate: sel ? String(sel.standard_rate) : line.rate });
+              }}
+            >
+              <option value="">-- Choose Item --</option>
+              {items.map(it => (
+                <option key={it.id} value={it.id}>
+                  {it.item_name}{showStock ? ` - Stock: ${it.current_stock}` : ` (${it.item_code})`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: '600' }}>Qty *</label>
+            <input type="number" min="0.01" step="0.01" required style={fieldStyle} value={line.quantity} onChange={e => update(idx, { quantity: e.target.value })} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: '600' }}>Rate *</label>
+            <input type="number" min="0" step="0.01" required style={fieldStyle} value={line.rate} onChange={e => update(idx, { rate: e.target.value })} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount</label>
+            <div style={{ padding: '8px 0', fontWeight: '600', whiteSpace: 'nowrap' }}>
+              Rs. {((parseFloat(line.quantity) || 0) * (parseFloat(line.rate) || 0)).toFixed(2)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(lines.filter((_, i) => i !== idx))}
+            disabled={lines.length === 1}
+            title="Remove line"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px',
+              borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', color: '#b91c1c',
+              cursor: lines.length === 1 ? 'not-allowed' : 'pointer', opacity: lines.length === 1 ? 0.5 : 1
+            }}
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...lines, newLine()])}
+        style={{
+          alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px',
+          borderRadius: '6px', border: '1px dashed #94a3b8', background: '#f8fafc', color: '#475569',
+          fontWeight: '600', cursor: 'pointer'
+        }}
+      >
+        <Plus size={14} /> Add Line
+      </button>
+    </div>
+  );
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports'>('selling');
@@ -28,6 +156,11 @@ export default function App() {
   const [stockLedger, setStockLedger] = useState<StockLedgerRow[]>([]);
   const [finance, setFinance] = useState<any>(null);
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
+
+  // Request status
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
 
   // Filters
   const [glAccountFilter, setGlAccountFilter] = useState<string>('all');
@@ -63,19 +196,24 @@ export default function App() {
     item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0'
   });
 
-  const [invoiceForm, setInvoiceForm] = useState({
-    invoice_number: 'INV-0001', customer_id: '', posting_date: new Date().toISOString().split('T')[0], item_id: '', quantity: '1', rate: '0', tax_rate: '18'
-  });
+  const [invoiceForm, setInvoiceForm] = useState(() => ({
+    invoice_number: 'INV-0001', customer_id: '', posting_date: new Date().toISOString().split('T')[0],
+    tax_rate: '18', status: 'Submitted', lines: [newLine()]
+  }));
 
-  const [purchaseForm, setPurchaseForm] = useState({
-    bill_number: 'PUR-0001', supplier_id: '', posting_date: new Date().toISOString().split('T')[0], item_id: '', quantity: '1', rate: '0', tax_rate: '18'
-  });
+  const [purchaseForm, setPurchaseForm] = useState(() => ({
+    bill_number: 'PUR-0001', supplier_id: '', posting_date: new Date().toISOString().split('T')[0],
+    tax_rate: '18', status: 'Submitted', lines: [newLine()]
+  }));
 
   const [paymentForm, setPaymentForm] = useState({
     voucher_no: 'PAY-0001', payment_type: 'Receive' as 'Receive' | 'Pay', posting_date: new Date().toISOString().split('T')[0], party_type: 'Customer', party_name: '', mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque', paid_amount: '0', reference_no: '', remarks: ''
   });
 
   const loadData = async () => {
+    const seq = ++requestSeq.current;
+    setLoading(true);
+    setLoadError(null);
     try {
       const glParams = new URLSearchParams();
       if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
@@ -95,17 +233,47 @@ export default function App() {
         fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
         fetch(`${API_BASE}/accounts/financial-statements/`)
       ]);
-      if (resCust.ok) setCustomers(await resCust.json());
-      if (resSupp.ok) setSuppliers(await resSupp.json());
-      if (resItems.ok) setItems(await resItems.json());
-      if (resInvoices.ok) setInvoices(await resInvoices.json());
-      if (resPurch.ok) setPurchases(await resPurch.json());
-      if (resPay.ok) setPayments(await resPay.json());
-      if (resGL.ok) setGlEntries(await resGL.json());
-      if (resStock.ok) setStockLedger(await resStock.json());
-      if (resFin.ok) setFinance(await resFin.json());
+
+      // A newer request has started in the meantime - drop this response so a
+      // slow reply cannot overwrite fresher data.
+      if (seq !== requestSeq.current) return;
+
+      const failed: string[] = [];
+      const read = async (label: string, res: Response) => {
+        if (!res.ok) { failed.push(label); return null; }
+        try { return await res.json(); }
+        catch { failed.push(label); return null; }
+      };
+
+      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
+        read('Customers', resCust),
+        read('Suppliers', resSupp),
+        read('Items', resItems),
+        read('Sales invoices', resInvoices),
+        read('Purchase bills', resPurch),
+        read('Payments', resPay),
+        read('General ledger', resGL),
+        read('Stock ledger', resStock),
+        read('Financial statements', resFin),
+      ]);
+
+      if (cust) setCustomers(cust);
+      if (supp) setSuppliers(supp);
+      if (itemList) setItems(itemList);
+      if (inv) setInvoices(inv);
+      if (pur) setPurchases(pur);
+      if (pay) setPayments(pay);
+      if (gl) setGlEntries(gl);
+      if (stock) setStockLedger(stock);
+      if (fin) setFinance(fin);
+
+      if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       console.error("API error:", err);
+      setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 
@@ -178,14 +346,32 @@ export default function App() {
     } catch (err: any) { alert(err.message); }
   };
 
+  // Line-item helpers shared by the sales and purchase forms.
+  const buildLines = (lines: LineForm[]) =>
+    lines.map(l => {
+      const quantity = parseFloat(l.quantity) || 0;
+      const rate = parseFloat(l.rate) || 0;
+      return { item: parseInt(l.item_id), quantity, rate, amount: (quantity * rate).toFixed(2) };
+    });
+
+  const validateLines = (lines: LineForm[]): boolean => {
+    const invalid = lines.some(l => !l.item_id || !(parseFloat(l.quantity) > 0) || !(parseFloat(l.rate) >= 0));
+    if (invalid) { alert('Each line needs an item, a quantity above zero and a rate.'); return false; }
+    return true;
+  };
+
+  const sumLines = (lines: LineForm[]) =>
+    lines.reduce((sum, l) => sum + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0), 0);
+
   const handleSaveInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
     const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id));
-    if (!selCust || !invoiceForm.item_id) { alert('Select customer & item'); return; }
-    const q = parseFloat(invoiceForm.quantity) || 0;
-    const r = parseFloat(invoiceForm.rate) || 0;
-    const net = q * r;
-    const tax = (net * parseFloat(invoiceForm.tax_rate)) / 100;
+    if (!selCust) { alert('Select a customer'); return; }
+    if (!validateLines(invoiceForm.lines)) return;
+
+    const lineItems = buildLines(invoiceForm.lines);
+    const net = sumLines(invoiceForm.lines);
+    const tax = (net * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
     try {
       const url = editingId ? `${API_BASE}/selling/invoices/${editingId}/` : `${API_BASE}/selling/invoices/`;
       const method = editingId ? 'PUT' : 'POST';
@@ -194,7 +380,7 @@ export default function App() {
         body: JSON.stringify({
           invoice_number: invoiceForm.invoice_number, customer: selCust.id, customer_name: selCust.customer_name,
           posting_date: invoiceForm.posting_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
-          status: 'Submitted', items: [{ item: parseInt(invoiceForm.item_id), quantity: q, rate: r, amount: net.toFixed(2) }]
+          status: invoiceForm.status, items: lineItems
         })
       });
       if (!res.ok) throw new Error('Failed to save sales invoice');
@@ -207,11 +393,12 @@ export default function App() {
   const handleSavePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     const selSupp = suppliers.find(s => s.id === parseInt(purchaseForm.supplier_id));
-    if (!selSupp || !purchaseForm.item_id) { alert('Select supplier & item'); return; }
-    const q = parseFloat(purchaseForm.quantity) || 0;
-    const r = parseFloat(purchaseForm.rate) || 0;
-    const net = q * r;
-    const tax = (net * parseFloat(purchaseForm.tax_rate)) / 100;
+    if (!selSupp) { alert('Select a supplier'); return; }
+    if (!validateLines(purchaseForm.lines)) return;
+
+    const lineItems = buildLines(purchaseForm.lines);
+    const net = sumLines(purchaseForm.lines);
+    const tax = (net * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
     try {
       const url = editingId ? `${API_BASE}/buying/invoices/${editingId}/` : `${API_BASE}/buying/invoices/`;
       const method = editingId ? 'PUT' : 'POST';
@@ -220,7 +407,7 @@ export default function App() {
         body: JSON.stringify({
           bill_number: purchaseForm.bill_number, supplier: selSupp.id, supplier_name: selSupp.supplier_name,
           posting_date: purchaseForm.posting_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
-          status: 'Submitted', items: [{ item: parseInt(purchaseForm.item_id), quantity: q, rate: r, amount: net.toFixed(2) }]
+          status: purchaseForm.status, items: lineItems
         })
       });
       if (!res.ok) throw new Error('Failed to save purchase bill');
@@ -234,10 +421,13 @@ export default function App() {
     e.preventDefault();
     const amount = parseFloat(paymentForm.paid_amount);
     if (!paymentForm.party_name || !amount || amount <= 0) { alert('Enter valid party and amount'); return; }
+    // Derive party_type from payment_type so the stored entry can never
+    // disagree with the party it was paid to or received from.
+    const partyType = paymentForm.payment_type === 'Receive' ? 'Customer' : 'Supplier';
     try {
       const res = await fetch(`${API_BASE}/accounts/payments/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...paymentForm, paid_amount: amount.toFixed(2) })
+        body: JSON.stringify({ ...paymentForm, party_type: partyType, paid_amount: amount.toFixed(2) })
       });
       if (!res.ok) throw new Error('Payment failed');
       setShowPaymentModal(false);
@@ -253,6 +443,12 @@ export default function App() {
   const totalDebit = glEntries.reduce((sum, r) => sum + Number(r.debit), 0);
   const totalCredit = glEntries.reduce((sum, r) => sum + Number(r.credit), 0);
   const closingBalance = glEntries.length > 0 ? glEntries[glEntries.length - 1].balance : 0;
+
+  // Live totals for the invoice / purchase forms
+  const invoiceNet = sumLines(invoiceForm.lines);
+  const invoiceTax = (invoiceNet * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
+  const purchaseNet = sumLines(purchaseForm.lines);
+  const purchaseTax = (purchaseNet * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', background: '#f8fafc', color: '#0f172a' }}>
@@ -296,12 +492,37 @@ export default function App() {
 
       {/* Main Content Area */}
       <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto' }}>
+        {/* Load status banner - a failed request must never look like "no data" */}
+        {loadError && (
+          <div
+            role="alert"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px',
+              padding: '12px 16px', borderRadius: '8px',
+              background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px'
+            }}
+          >
+            <X size={16} />
+            <span style={{ flex: 1 }}>{loadError}</span>
+            <button
+              onClick={() => loadData()}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', fontWeight: '600' }}
+            >
+              <RefreshCw size={13} /> Retry
+            </button>
+          </div>
+        )}
+        {loading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', color: '#64748b', fontSize: '13px' }}>
+            <RefreshCw size={14} className="spin" /> Loading data...
+          </div>
+        )}
         {/* TAB 1: SELLING */}
         {activeTab === 'selling' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Sales Invoices</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer sales with GST & automatic inventory deductions</p></div>
-              <button onClick={() => { setEditingId(null); setInvoiceForm(prev => ({ ...prev, invoice_number: getNextInvoiceNumber(invoices), customer_id: '', item_id: '', quantity: '1', rate: '0', tax_rate: '18' })); setShowInvoiceModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Invoice</button>
+              <button onClick={() => { setEditingId(null); setInvoiceForm(prev => ({ ...prev, invoice_number: getNextInvoiceNumber(invoices), customer_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); setShowInvoiceModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Invoice</button>
             </div>
             <DataTable<SalesInvoice> 
               columns={[
@@ -328,10 +549,11 @@ export default function App() {
                             invoice_number: row.invoice_number,
                             customer_id: row.customer ? row.customer.toString() : '',
                             posting_date: row.posting_date,
-                            item_id: row.items?.[0] ? row.items[0].item.toString() : '',
-                            quantity: row.items?.[0] ? row.items[0].quantity.toString() : '1',
-                            rate: row.items?.[0] ? row.items[0].rate.toString() : '0',
-                            tax_rate: '18'
+                            tax_rate: inferTaxRate(row.net_total, row.tax_amount),
+                            status: row.status || 'Submitted',
+                            // Load every line, not just the first - the backend
+                            // deletes all lines and recreates them from this list.
+                            lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
                           });
                           setShowInvoiceModal(true);
                         }}
@@ -360,7 +582,7 @@ export default function App() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Purchase Bills (Buying)</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Inward supplier bills, input GST credits & inventory replenishment</p></div>
-              <button onClick={() => { setEditingId(null); setPurchaseForm(prev => ({ ...prev, bill_number: getNextPurchaseNumber(purchases), supplier_id: '', item_id: '', quantity: '1', rate: '0', tax_rate: '18' })); setShowPurchaseModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Purchase Bill</button>
+              <button onClick={() => { setEditingId(null); setPurchaseForm(prev => ({ ...prev, bill_number: getNextPurchaseNumber(purchases), supplier_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); setShowPurchaseModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Purchase Bill</button>
             </div>
             <DataTable<PurchaseInvoice> 
               columns={[
@@ -387,10 +609,11 @@ export default function App() {
                             bill_number: row.bill_number,
                             supplier_id: row.supplier ? row.supplier.toString() : '',
                             posting_date: row.posting_date,
-                            item_id: row.items?.[0] ? row.items[0].item.toString() : '',
-                            quantity: row.items?.[0] ? row.items[0].quantity.toString() : '1',
-                            rate: row.items?.[0] ? row.items[0].rate.toString() : '0',
-                            tax_rate: '18'
+                            tax_rate: inferTaxRate(row.net_total, row.tax_amount),
+                            status: row.status || 'Submitted',
+                            // Load every line, not just the first - the backend
+                            // deletes all lines and recreates them from this list.
+                            lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
                           });
                           setShowPurchaseModal(true);
                         }}
@@ -489,7 +712,7 @@ export default function App() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Payment Entries</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer receipts & supplier vendor payments</p></div>
-              <button onClick={() => { setPaymentForm(prev => ({ ...prev, voucher_no: getNextPaymentNumber(payments), paid_amount: '0', party_name: customers[0]?.customer_name || '' })); setShowPaymentModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> Make / Receive Payment</button>
+              <button onClick={() => { setPaymentForm(prev => ({ ...prev, voucher_no: getNextPaymentNumber(payments), payment_type: 'Receive', party_type: 'Customer', party_name: '', paid_amount: '0', reference_no: '', remarks: '' })); setShowPaymentModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> Make / Receive Payment</button>
             </div>
             <DataTable<PaymentEntry> 
               columns={[
@@ -708,7 +931,7 @@ export default function App() {
         )}
 
         {/* TAB 9: REPORTS */}
-        {activeTab === 'reports' && finance && (
+        {activeTab === 'reports' && (finance ? (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div>
@@ -774,7 +997,17 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+        ) : (
+          <div style={{ background: '#fff', padding: '48px 32px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
+              {loading
+                ? 'Loading financial statements...'
+                : loadError
+                  ? 'Financial statements could not be loaded. Check the banner above and retry.'
+                  : 'No financial statements available yet.'}
+            </p>
+          </div>
+        ))}
       </main>
 
       {/* Invoice Print Modal */}
@@ -843,13 +1076,32 @@ export default function App() {
 
       {showPurchaseModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '500px' }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Purchase Bill' : 'Record Purchase Bill'}</h3><button onClick={() => setShowPurchaseModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
             <form onSubmit={handleSavePurchase} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Bill #</label><input required disabled={!!editingId} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: editingId ? '#f1f5f9' : '#fff' }} value={purchaseForm.bill_number} onChange={e => setPurchaseForm({ ...purchaseForm, bill_number: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Posting Date</label><input type="date" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.posting_date} onChange={e => setPurchaseForm({ ...purchaseForm, posting_date: e.target.value })} /></div></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Supplier *</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.supplier_id} onChange={e => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })}><option value="">-- Choose Supplier --</option>{suppliers.map(s => (<option key={s.id} value={s.id}>{s.supplier_name}</option>))}</select></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Item To Buy *</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.item_id} onChange={e => setPurchaseForm({ ...purchaseForm, item_id: e.target.value })}><option value="">-- Choose Item --</option>{items.map(it => (<option key={it.id} value={it.id}>{it.item_name} ({it.item_code})</option>))}</select></div>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Quantity</label><input type="number" min="1" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.quantity} onChange={e => setPurchaseForm({ ...purchaseForm, quantity: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Purchase Rate (Rs.)</label><input type="number" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.rate} onChange={e => setPurchaseForm({ ...purchaseForm, rate: e.target.value })} /></div><div style={{ width: '100px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={purchaseForm.tax_rate} onChange={e => setPurchaseForm({ ...purchaseForm, tax_rate: e.target.value })}><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="28">28%</option></select></div></div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Bill #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={purchaseForm.bill_number} onChange={e => setPurchaseForm({ ...purchaseForm, bill_number: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Posting Date</label><input type="date" required style={fieldStyle} value={purchaseForm.posting_date} onChange={e => setPurchaseForm({ ...purchaseForm, posting_date: e.target.value })} /></div>
+                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={purchaseForm.tax_rate} onChange={e => setPurchaseForm({ ...purchaseForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
+              </div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Supplier *</label><select required style={fieldStyle} value={purchaseForm.supplier_id} onChange={e => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })}><option value="">-- Choose Supplier --</option>{suppliers.map(s => (<option key={s.id} value={s.id}>{s.supplier_name}</option>))}</select></div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
+                <LineItemsEditor
+                  lines={purchaseForm.lines}
+                  items={items}
+                  showStock={false}
+                  onChange={lines => setPurchaseForm(prev => ({ ...prev, lines }))}
+                />
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Net Total</span><strong>Rs. {purchaseNet.toFixed(2)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Input GST ({purchaseForm.tax_rate}%)</span><strong>Rs. {purchaseTax.toFixed(2)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}><strong>Total Payable</strong><strong style={{ color: '#0369a1' }}>Rs. {(purchaseNet + purchaseTax).toFixed(2)}</strong></div>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowPurchaseModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
                 <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Bill' : 'Submit Bill'}</button>
@@ -894,13 +1146,32 @@ export default function App() {
 
       {showInvoiceModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '500px' }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Sales Invoice' : 'Create Sales Invoice'}</h3><button onClick={() => setShowInvoiceModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
             <form onSubmit={handleSaveInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.item_id} onChange={e => { const sel = items.find(i => i.id === parseInt(e.target.value)); setInvoiceForm({ ...invoiceForm, item_id: e.target.value, rate: sel ? sel.standard_rate.toString() : invoiceForm.rate }); }}><option value="">-- Choose Item --</option>{items.map(it => (<option key={it.id} value={it.id}>{it.item_name} - Stock: {it.current_stock}</option>))}</select></div>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Quantity</label><input type="number" min="1" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.quantity} onChange={e => setInvoiceForm({ ...invoiceForm, quantity: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate</label><input type="number" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.rate} onChange={e => setInvoiceForm({ ...invoiceForm, rate: e.target.value })} /></div></div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={fieldStyle} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div>
+                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={invoiceForm.tax_rate} onChange={e => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
+              </div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={fieldStyle} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
+                <LineItemsEditor
+                  lines={invoiceForm.lines}
+                  items={items}
+                  showStock={true}
+                  onChange={lines => setInvoiceForm(prev => ({ ...prev, lines }))}
+                />
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Net Total</span><strong>Rs. {invoiceNet.toFixed(2)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Output GST ({invoiceForm.tax_rate}%)</span><strong>Rs. {invoiceTax.toFixed(2)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}><strong>Grand Total</strong><strong style={{ color: '#0369a1' }}>Rs. {(invoiceNet + invoiceTax).toFixed(2)}</strong></div>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowInvoiceModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
                 <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Invoice' : 'Submit Invoice'}</button>
@@ -921,7 +1192,17 @@ export default function App() {
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Payment Type</label>
-                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => setPaymentForm({ ...paymentForm, payment_type: e.target.value as any })}>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => {
+                    const type = e.target.value as 'Receive' | 'Pay';
+                    // party_type follows payment_type, and the selected party is
+                    // cleared because the two lists are disjoint.
+                    setPaymentForm(prev => ({
+                      ...prev,
+                      payment_type: type,
+                      party_type: type === 'Receive' ? 'Customer' : 'Supplier',
+                      party_name: ''
+                    }));
+                  }}>
                     <option value="Receive">Receive (From Customer)</option>
                     <option value="Pay">Pay (To Supplier)</option>
                   </select>
