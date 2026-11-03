@@ -99,3 +99,17 @@ export interface PaymentEntry {
   reference_no?: string;
   remarks?: string;
 }
+
+export interface StockLedgerRow {
+  id: number;
+  posting_date: string;
+  item_code: string;
+  item_name: string;
+  voucher_type: string;
+  voucher_no: string;
+  in_qty: number;
+  out_qty: number;
+  balance_qty: number;
+  valuation_rate: number;
+  balance_value: number;
+}

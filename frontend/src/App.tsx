@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
-import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry } from './types/erp';
-import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw } from 'lucide-react';
+import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow } from './types/erp';
+import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers } from 'lucide-react';
+import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
+import { PaymentPrintModal } from './components/PaymentPrintModal';
+import { LedgerPrintModal } from './components/LedgerPrintModal';
+import { FinancialReportPrintModal } from './components/FinancialReportPrintModal';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 
@@ -11,7 +15,7 @@ const getNextPurchaseNumber = (list: PurchaseInvoice[]) => `PUR-${String(list.le
 const getNextPaymentNumber = (list: PaymentEntry[]) => `PAY-${String(list.length + 1).padStart(4, '0')}`;
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'accounts' | 'reports'>('selling');
+  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports'>('selling');
   
   // Data states
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -21,19 +25,24 @@ export default function App() {
   const [purchases, setPurchases] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [glEntries, setGlEntries] = useState<GLEntryRow[]>([]);
+  const [stockLedger, setStockLedger] = useState<StockLedgerRow[]>([]);
   const [finance, setFinance] = useState<any>(null);
+  const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
 
-  // GL Filters State
+  // Filters
   const [glAccountFilter, setGlAccountFilter] = useState<string>('all');
   const [glPartyFilter, setGlPartyFilter] = useState<string>('all');
+  const [stockItemFilter, setStockItemFilter] = useState<string>('all');
 
-  // Print Modal State
+  // Print Modal
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<SalesInvoice | null>(null);
-
-  // Edit Tracking
+  const [selectedPurchaseForPrint, setSelectedPurchaseForPrint] = useState<PurchaseInvoice | null>(null);
+  const [selectedPaymentForPrint, setSelectedPaymentForPrint] = useState<PaymentEntry | null>(null);
+  const [showLedgerPrintModal, setShowLedgerPrintModal] = useState<boolean>(false);
+  
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // Modal states
+  // Modals
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [showItemModal, setShowItemModal] = useState(false);
@@ -72,7 +81,10 @@ export default function App() {
       if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
       if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
 
-      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resFin] = await Promise.all([
+      const stockParams = new URLSearchParams();
+      if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
+
+      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
         fetch(`${API_BASE}/selling/customers/`),
         fetch(`${API_BASE}/buying/suppliers/`),
         fetch(`${API_BASE}/stock/items/`),
@@ -80,6 +92,7 @@ export default function App() {
         fetch(`${API_BASE}/buying/invoices/`),
         fetch(`${API_BASE}/accounts/payments/`),
         fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
+        fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
         fetch(`${API_BASE}/accounts/financial-statements/`)
       ]);
       if (resCust.ok) setCustomers(await resCust.json());
@@ -89,6 +102,7 @@ export default function App() {
       if (resPurch.ok) setPurchases(await resPurch.json());
       if (resPay.ok) setPayments(await resPay.json());
       if (resGL.ok) setGlEntries(await resGL.json());
+      if (resStock.ok) setStockLedger(await resStock.json());
       if (resFin.ok) setFinance(await resFin.json());
     } catch (err) {
       console.error("API error:", err);
@@ -97,7 +111,26 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-  }, [activeTab, glAccountFilter, glPartyFilter]);
+  }, [activeTab, glAccountFilter, glPartyFilter, stockItemFilter]);
+
+  // Safe Deletion Handlers
+  const handleDeleteInvoice = async (id: number, invNo: string) => {
+    if (!window.confirm(`Are you sure you want to delete Sales Invoice #${invNo}? This will automatically reverse stock deduction and General Ledger entries.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/selling/invoices/${id}/`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete invoice');
+      loadData();
+    } catch (err: any) { alert(err.message); }
+  };
+
+  const handleDeletePurchase = async (id: number, billNo: string) => {
+    if (!window.confirm(`Are you sure you want to delete Purchase Bill #${billNo}? This will automatically deduct added stock and reverse GL liabilities.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete purchase bill');
+      loadData();
+    } catch (err: any) { alert(err.message); }
+  };
 
   const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -212,13 +245,11 @@ export default function App() {
     } catch (err: any) { alert(err.message); }
   };
 
-  // Distinct parties for filter
   const allPartyNames = Array.from(new Set([
     ...customers.map(c => c.customer_name),
     ...suppliers.map(s => s.supplier_name)
   ]));
 
-  // Calculate filtered GL totals
   const totalDebit = glEntries.reduce((sum, r) => sum + Number(r.debit), 0);
   const totalCredit = glEntries.reduce((sum, r) => sum + Number(r.credit), 0);
   const closingBalance = glEntries.length > 0 ? glEntries[glEntries.length - 1].balance : 0;
@@ -250,6 +281,9 @@ export default function App() {
           </button>
           <button onClick={() => setActiveTab('stock')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock' ? '#1e293b' : 'transparent', color: activeTab === 'stock' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <Package size={18} /> Stock (Items)
+          </button>
+          <button onClick={() => setActiveTab('stock-ledger')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock-ledger' ? '#1e293b' : 'transparent', color: activeTab === 'stock-ledger' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
+            <Layers size={18} /> Stock Movement Ledger
           </button>
           <button onClick={() => setActiveTab('accounts')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'accounts' ? '#1e293b' : 'transparent', color: activeTab === 'accounts' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <BookOpen size={18} /> General Ledger
@@ -305,6 +339,12 @@ export default function App() {
                       >
                         <Edit2 size={12} /> Edit
                       </button>
+                      <button 
+                        onClick={() => handleDeleteInvoice(row.id!, row.invoice_number)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
+                      >
+                        <Trash2 size={12} /> Delete
+                      </button>
                     </div>
                   )
                 }
@@ -331,26 +371,40 @@ export default function App() {
                 { header: 'Input Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` }, 
                 { header: 'Total Payable (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
                 {
-                  header: 'Action',
+                  header: 'Actions',
                   accessor: (row) => (
-                    <button 
-                      onClick={() => {
-                        setEditingId(row.id || null);
-                        setPurchaseForm({
-                          bill_number: row.bill_number,
-                          supplier_id: row.supplier ? row.supplier.toString() : '',
-                          posting_date: row.posting_date,
-                          item_id: row.items?.[0] ? row.items[0].item.toString() : '',
-                          quantity: row.items?.[0] ? row.items[0].quantity.toString() : '1',
-                          rate: row.items?.[0] ? row.items[0].rate.toString() : '0',
-                          tax_rate: '18'
-                        });
-                        setShowPurchaseModal(true);
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button 
+                        onClick={() => setSelectedPurchaseForPrint(row)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
+                      >
+                        <Printer size={12} /> Print
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setEditingId(row.id || null);
+                          setPurchaseForm({
+                            bill_number: row.bill_number,
+                            supplier_id: row.supplier ? row.supplier.toString() : '',
+                            posting_date: row.posting_date,
+                            item_id: row.items?.[0] ? row.items[0].item.toString() : '',
+                            quantity: row.items?.[0] ? row.items[0].quantity.toString() : '1',
+                            rate: row.items?.[0] ? row.items[0].rate.toString() : '0',
+                            tax_rate: '18'
+                          });
+                          setShowPurchaseModal(true);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
+                      >
+                        <Edit2 size={12} /> Edit
+                      </button>
+                      <button 
+                        onClick={() => handleDeletePurchase(row.id!, row.bill_number)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
+                      >
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    </div>
                   )
                 }
               ]} 
@@ -437,7 +491,29 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Payment Entries</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer receipts & supplier vendor payments</p></div>
               <button onClick={() => { setPaymentForm(prev => ({ ...prev, voucher_no: getNextPaymentNumber(payments), paid_amount: '0', party_name: customers[0]?.customer_name || '' })); setShowPaymentModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> Make / Receive Payment</button>
             </div>
-            <DataTable<PaymentEntry> columns={[{ header: 'Voucher #', accessor: 'voucher_no' }, { header: 'Date', accessor: 'posting_date' }, { header: 'Type', accessor: 'payment_type' }, { header: 'Party', accessor: 'party_name' }, { header: 'Mode', accessor: 'mode_of_payment' }, { header: 'Amount (Rs.)', accessor: r => <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>Rs. {r.paid_amount}</strong> }]} data={payments} emptyMessage="No payment entries yet." />
+            <DataTable<PaymentEntry> 
+              columns={[
+                { header: 'Voucher #', accessor: 'voucher_no' }, 
+                { header: 'Date', accessor: 'posting_date' }, 
+                { header: 'Type', accessor: 'payment_type' }, 
+                { header: 'Party', accessor: 'party_name' }, 
+                { header: 'Mode', accessor: 'mode_of_payment' }, 
+                { header: 'Amount (Rs.)', accessor: r => <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>Rs. {r.paid_amount}</strong> },
+                {
+                  header: 'Action',
+                  accessor: (row) => (
+                    <button 
+                      onClick={() => setSelectedPaymentForPrint(row)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
+                    >
+                      <Printer size={12} /> Print
+                    </button>
+                  )
+                }
+              ]} 
+              data={payments} 
+              emptyMessage="No payment entries yet." 
+            />  
           </div>
         )}
 
@@ -445,7 +521,7 @@ export default function App() {
         {activeTab === 'stock' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Live stock ledger balance</p></div>
+              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Current warehouse inventory balance</p></div>
               <button onClick={() => { setEditingId(null); setItemForm({ item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0' }); setShowItemModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Item</button>
             </div>
             <DataTable<Item> 
@@ -484,7 +560,59 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 7: GL WITH FILTERS */}
+        {/* TAB 7: STOCK MOVEMENT LEDGER */}
+        {activeTab === 'stock-ledger' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Movement & Valuation Ledger</h1>
+                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Chronological register of inward receipts, outward issues & item balances</p>
+              </div>
+              <button 
+                onClick={() => setStockItemFilter('all')}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
+              >
+                <RefreshCw size={14} /> Reset Item Filter
+              </button>
+            </div>
+
+            {/* Filter Bar */}
+            <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
+                <Filter size={16} /> Filter by Item:
+              </div>
+              <div style={{ flex: 1, maxWidth: '400px' }}>
+                <select 
+                  value={stockItemFilter} 
+                  onChange={e => setStockItemFilter(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
+                >
+                  <option value="all" style={{ color: '#0f172a' }}>All Inventory Items</option>
+                  {items.map(it => (
+                    <option key={it.id} value={it.id} style={{ color: '#0f172a' }}>{it.item_name} ({it.item_code})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <DataTable<StockLedgerRow> 
+              columns={[
+                { header: 'Date', accessor: 'posting_date' },
+                { header: 'Item Name', accessor: r => <strong>{r.item_name} ({r.item_code})</strong> },
+                { header: 'Voucher', accessor: r => `${r.voucher_type} #${r.voucher_no}` },
+                { header: 'Inward (+)', accessor: r => r.in_qty > 0 ? <span style={{ color: '#15803d', fontWeight: '600' }}>+{r.in_qty}</span> : '-' },
+                { header: 'Outward (-)', accessor: r => r.out_qty > 0 ? <span style={{ color: '#b91c1c', fontWeight: '600' }}>-{r.out_qty}</span> : '-' },
+                { header: 'Balance Qty', accessor: r => <strong>{r.balance_qty}</strong> },
+                { header: 'Valuation Rate', accessor: r => `Rs. ${r.valuation_rate.toFixed(2)}` },
+                { header: 'Total Value', accessor: r => <strong style={{ color: '#0284c7' }}>Rs. {r.balance_value.toFixed(2)}</strong> }
+              ]}
+              data={stockLedger}
+              emptyMessage="No stock transactions found for the selected criteria."
+            />
+          </div>
+        )}
+
+        {/* TAB 8: GL WITH FILTERS */}
         {activeTab === 'accounts' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -492,21 +620,27 @@ export default function App() {
                 <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>General Ledger Entries</h1>
                 <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Unified double-entry bookkeeping ledger & individual party statements</p>
               </div>
-              <button 
-                onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); }}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
-              >
-                <RefreshCw size={14} /> Reset Filters
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  onClick={() => setShowLedgerPrintModal(true)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+                >
+                  <Printer size={14} /> Print Statement
+                </button>
+                <button 
+                  onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
+                >
+                  <RefreshCw size={14} /> Reset Filters
+                </button>
+              </div>
             </div>
 
-            {/* Filter Controls Card */}
             <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
                 <Filter size={16} /> Filters:
               </div>
 
-              {/* Account Filter */}
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Account</label>
                 <select 
@@ -514,18 +648,17 @@ export default function App() {
                   onChange={e => setGlAccountFilter(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
                 >
-                  <option value="all">All Accounts (Complete Ledger)</option>
-                  <option value="Debtors">Debtors (Customer Accounts)</option>
-                  <option value="Creditors">Creditors (Supplier Accounts)</option>
-                  <option value="Bank Account">Bank Account</option>
-                  <option value="Sales Income">Sales Income</option>
-                  <option value="Stock Received But Not Billed">Stock Received (Purchases)</option>
-                  <option value="Input GST">Input GST</option>
-                  <option value="Output GST">Output GST</option>
+                  <option value="all" style={{ color: '#0f172a' }}>All Accounts (Complete Ledger)</option>
+                  <option value="Debtors" style={{ color: '#0f172a' }}>Debtors (Customer Accounts)</option>
+                  <option value="Creditors" style={{ color: '#0f172a' }}>Creditors (Supplier Accounts)</option>
+                  <option value="Bank Account" style={{ color: '#0f172a' }}>Bank Account</option>
+                  <option value="Sales Income" style={{ color: '#0f172a' }}>Sales Income</option>
+                  <option value="Stock Received But Not Billed" style={{ color: '#0f172a' }}>Stock Received (Purchases)</option>
+                  <option value="Input GST" style={{ color: '#0f172a' }}>Input GST</option>
+                  <option value="Output GST" style={{ color: '#0f172a' }}>Output GST</option>
                 </select>
               </div>
 
-              {/* Party Filter */}
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Party (Customer / Supplier)</label>
                 <select 
@@ -533,15 +666,14 @@ export default function App() {
                   onChange={e => setGlPartyFilter(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
                 >
-                  <option value="all">All Parties</option>
+                  <option value="all" style={{ color: '#0f172a' }}>All Parties</option>
                   {allPartyNames.map((p, idx) => (
-                    <option key={idx} value={p}>{p}</option>
+                    <option key={idx} value={p} style={{ color: '#0f172a' }}>{p}</option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {/* Filter Summary Metrics */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
               <div style={{ background: '#fff', padding: '14px 18px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <span style={{ fontSize: '12px', color: '#64748b' }}>Total Debits:</span>
@@ -575,12 +707,20 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 8: REPORTS */}
+        {/* TAB 9: REPORTS */}
         {activeTab === 'reports' && finance && (
           <div>
-            <div style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Financial Statements</h1>
-              <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time Profit & Loss and Balance Sheet derived from General Ledger</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Financial Statements</h1>
+                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time Profit & Loss and Balance Sheet derived from General Ledger</p>
+              </div>
+              <button 
+                onClick={() => setShowFinancePrintModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+              >
+                <Printer size={16} /> Print Financial Statements
+              </button>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
@@ -645,6 +785,42 @@ export default function App() {
           itemsMaster={items}
           onClose={() => setSelectedInvoiceForPrint(null)}
         />
+      )}
+
+      {/* Purchase Bill Print Modal */}
+      {selectedPurchaseForPrint && (
+        <PurchaseBillPrintModal
+          bill={selectedPurchaseForPrint}
+          supplier={suppliers.find(s => s.id === selectedPurchaseForPrint.supplier || s.supplier_name === selectedPurchaseForPrint.supplier_name)}
+          itemsMaster={items}
+          onClose={() => setSelectedPurchaseForPrint(null)}
+        />
+      )}
+
+      {/* Payment Print Modal */}
+      {selectedPaymentForPrint && (
+        <PaymentPrintModal
+          payment={selectedPaymentForPrint}
+          onClose={() => setSelectedPaymentForPrint(null)}
+        />
+      )}
+
+      {/* Ledger Statement Print Modal */}
+      {showLedgerPrintModal && (
+        <LedgerPrintModal
+          entries={glEntries}
+          accountFilter={glAccountFilter}
+          partyFilter={glPartyFilter}
+          totalDebit={totalDebit}
+          totalCredit={totalCredit}
+          closingBalance={closingBalance}
+          onClose={() => setShowLedgerPrintModal(false)}
+        />
+      )}
+
+      {/* Financial Statements Print Modal */}
+      {showFinancePrintModal && (
+        <FinancialReportPrintModal finance={finance} onClose={() => setShowFinancePrintModal(false)} />
       )}
 
       {/* Modals with red cancel buttons */}
@@ -723,7 +899,7 @@ export default function App() {
             <form onSubmit={handleSaveInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div></div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.item_id} onChange={e => { const sel = items.find(i => i.id === parseInt(e.target.value)); setInvoiceForm({ ...invoiceForm, item_id: e.target.value, rate: sel ? sel.standard_rate.toString() : invoiceForm.rate }); }}><option value="">-- Choose Item --</option>{items.map(it => (<option key={it.id} value={it.id}>{it.item_name}</option>))}</select></div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.item_id} onChange={e => { const sel = items.find(i => i.id === parseInt(e.target.value)); setInvoiceForm({ ...invoiceForm, item_id: e.target.value, rate: sel ? sel.standard_rate.toString() : invoiceForm.rate }); }}><option value="">-- Choose Item --</option>{items.map(it => (<option key={it.id} value={it.id}>{it.item_name} - Stock: {it.current_stock}</option>))}</select></div>
               <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Quantity</label><input type="number" min="1" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.quantity} onChange={e => setInvoiceForm({ ...invoiceForm, quantity: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate</label><input type="number" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={invoiceForm.rate} onChange={e => setInvoiceForm({ ...invoiceForm, rate: e.target.value })} /></div></div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowInvoiceModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
@@ -737,11 +913,64 @@ export default function App() {
       {showPaymentModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>Payment Entry</h3><button onClick={() => setShowPaymentModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>Payment Entry</h3>
+              <button onClick={() => setShowPaymentModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
             <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Payment Type</label><select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => setPaymentForm({ ...paymentForm, payment_type: e.target.value as any })}><option value="Receive">Receive (From Customer)</option><option value="Pay">Pay (To Supplier)</option></select></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Mode</label><select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as any })}><option value="Bank">Bank Transfer / UPI</option><option value="Cash">Cash</option><option value="Cheque">Cheque</option></select></div></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Party Name *</label><select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.party_name} onChange={e => setPaymentForm({ ...paymentForm, party_name: e.target.value })}><option value="">-- Choose Party --</option>{paymentForm.payment_type === 'Receive' ? customers.map(c => <option key={c.id} value={c.customer_name}>{c.customer_name}</option>) : suppliers.map(s => <option key={s.id} value={s.supplier_name}>{s.supplier_name}</option>)}</select></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Amount (Rs.) *</label><input type="number" step="0.01" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.paid_amount} onChange={e => setPaymentForm({ ...paymentForm, paid_amount: e.target.value })} /></div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>Payment Type</label>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => setPaymentForm({ ...paymentForm, payment_type: e.target.value as any })}>
+                    <option value="Receive">Receive (From Customer)</option>
+                    <option value="Pay">Pay (To Supplier)</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>Mode</label>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as any })}>
+                    <option value="Bank">Bank Transfer / UPI</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Cheque">Cheque</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Party Name *</label>
+                <select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.party_name} onChange={e => setPaymentForm({ ...paymentForm, party_name: e.target.value })}>
+                  <option value="">-- Choose Party --</option>
+                  {paymentForm.payment_type === 'Receive' ? customers.map(c => <option key={c.id} value={c.customer_name}>{c.customer_name}</option>) : suppliers.map(s => <option key={s.id} value={s.supplier_name}>{s.supplier_name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount (Rs.) *</label>
+                <input type="number" step="0.01" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.paid_amount} onChange={e => setPaymentForm({ ...paymentForm, paid_amount: e.target.value })} />
+              </div>
+
+              {/* Reference / UTR Number Field */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Reference / UTR / Cheque No</label>
+                <input 
+                  placeholder="e.g. UPI-123456789 or CHQ-00123" 
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} 
+                  value={paymentForm.reference_no || ''} 
+                  onChange={e => setPaymentForm({ ...paymentForm, reference_no: e.target.value })} 
+                />
+              </div>
+
+              {/* Remarks / Narration Field */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Remarks / Narration</label>
+                <input 
+                  placeholder="e.g. Paid against Invoice INV-0002" 
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} 
+                  value={paymentForm.remarks || ''} 
+                  onChange={e => setPaymentForm({ ...paymentForm, remarks: e.target.value })} 
+                />
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowPaymentModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
                 <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Save Payment</button>
@@ -753,3 +982,4 @@ export default function App() {
     </div>
   );
 }
+

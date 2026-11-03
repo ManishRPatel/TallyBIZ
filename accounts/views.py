@@ -27,13 +27,14 @@ class GeneralLedgerAPIView(APIView):
         if to_date:
             filters['posting_date__lte'] = to_date
 
+        # Chronological sort: pehla date ane pachi entry ID jethi bills pehla ane payments pachi ganay
         entries = GLEntry.objects.filter(**filters).order_by('posting_date', 'id')
 
         report = []
         running_balance = Decimal('0.00')
 
         for row in entries:
-            # Liability & Supplier accounts increase with credit, others with debit
+            # Liability, Supplier ane Income accounts Credit thi vadhe, baki badha Debit thi vadhe
             if row.account in ['Creditors', 'Output GST', 'Sales Income']:
                 running_balance += (row.credit - row.debit)
             else:
@@ -69,8 +70,9 @@ class FinancialStatementsAPIView(APIView):
         input_gst = (GLEntry.objects.filter(account="Input GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
                     (GLEntry.objects.filter(account="Input GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
         
+        # Output GST એ liability છે: credit - debit થી net liability મળે (debit reversal સામે)
         output_gst = (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
-                     (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+                     (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
 
         net_gst_payable = output_gst - input_gst
 

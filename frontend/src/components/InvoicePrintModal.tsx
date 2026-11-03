@@ -15,18 +15,20 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   itemsMaster,
   onClose,
 }) => {
-  if (!invoice) return null;
-
-  const formattedParty = (invoice.customer_name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
-  const targetFileName = `Invoice_${invoice.invoice_number}_${formattedParty}`;
+  // Hooks must run unconditionally, so the effect is declared before the
+  // null-guard below.
+  const formattedParty = (invoice?.customer_name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
+  const targetFileName = invoice ? `Invoice_${invoice.invoice_number}_${formattedParty}` : '';
 
   useEffect(() => {
     const originalTitle = document.title;
-    document.title = targetFileName;
+    if (targetFileName) document.title = targetFileName;
     return () => {
       document.title = originalTitle;
     };
   }, [targetFileName]);
+
+  if (!invoice) return null;
 
   const handlePrint = () => {
     window.print();
