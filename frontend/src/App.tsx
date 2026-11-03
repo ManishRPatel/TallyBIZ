@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback, useTransition, useRef } from 'react';
-import type { CSSProperties, FC, FormEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type CSSProperties, type FC, type FormEvent } from 'react';
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
@@ -13,9 +12,11 @@ const API_BASE = 'http://127.0.0.1:8000/api';
 
 const GST_SLABS = ['0', '5', '12', '18', '28'];
 
-// Document numbers must continue from the highest existing sequence, not from
-// the row count. Deleting a document leaves a gap, and `length + 1` would then
-// hand out a number that already exists (both are UNIQUE in the database).
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  return String(err);
+};
+
 const nextSequenceNumber = (prefix: string, existing: (string | undefined)[]): string => {
   const highest = existing.reduce((max, value) => {
     const match = /^([A-Za-z-]*)(\d+)$/.exec(value ?? '');
@@ -28,8 +29,6 @@ const getNextInvoiceNumber = (list: SalesInvoice[]) => nextSequenceNumber('INV-'
 const getNextPurchaseNumber = (list: PurchaseInvoice[]) => nextSequenceNumber('PUR-', list.map(p => p.bill_number));
 const getNextPaymentNumber = (list: PaymentEntry[]) => nextSequenceNumber('PAY-', list.map(p => p.voucher_no));
 
-// The tax rate is not stored on the invoice, but it is recoverable from the
-// stored amounts. Snap it to the nearest slab so it matches a <select> option.
 const inferTaxRate = (netTotal: number | string, taxAmount: number | string): string => {
   const net = parseFloat(String(netTotal)) || 0;
   const tax = parseFloat(String(taxAmount)) || 0;
@@ -62,8 +61,6 @@ const fieldStyle: CSSProperties = {
   width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box'
 };
 
-// Defined at module scope on purpose: a component declared inside App() would
-// be a new type on every render, remounting the inputs and dropping focus.
 const LineItemsEditor: FC<{
   lines: LineForm[];
   items: Item[];
@@ -87,7 +84,7 @@ const LineItemsEditor: FC<{
               style={fieldStyle}
               value={line.item_id}
               onChange={e => {
-                const sel = items.find(i => i.id === parseInt(e.target.value));
+                const sel = items.find(i => i.id === parseInt(e.target.value, 10));
                 update(idx, { item_id: e.target.value, rate: sel ? String(sel.standard_rate) : line.rate });
               }}
             >
@@ -159,10 +156,7 @@ export default function App() {
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
 
   // Request status
-  // `loading` is the transition's pending flag: React keeps it true for the
-  // whole async data load, so the spinner tracks the request without any
-  // effect-body setState.
-  const [loading, startTransition] = useTransition();
+  const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const requestSeq = useRef(0);
 
@@ -214,101 +208,92 @@ export default function App() {
     voucher_no: 'PAY-0001', payment_type: 'Receive' as 'Receive' | 'Pay', posting_date: new Date().toISOString().split('T')[0], party_type: 'Customer', party_name: '', mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque', paid_amount: '0', reference_no: '', remarks: ''
   });
 
-  // `loadData` reads the current filter values, so it is a `useCallback` over
-  // those filters. The fetch itself runs inside a transition: React keeps
-  // `loading` true for the whole async transition, which gives us the spinner
-  // without setting state synchronously in the effect body.
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
     const seq = ++requestSeq.current;
-    startTransition(async () => {
-      try {
-        const glParams = new URLSearchParams();
-        if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
-        if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const glParams = new URLSearchParams();
+      if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
+      if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
 
-        const stockParams = new URLSearchParams();
-        if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
+      const stockParams = new URLSearchParams();
+      if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
 
-        const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
-          fetch(`${API_BASE}/selling/customers/`),
-          fetch(`${API_BASE}/buying/suppliers/`),
-          fetch(`${API_BASE}/stock/items/`),
-          fetch(`${API_BASE}/selling/invoices/`),
-          fetch(`${API_BASE}/buying/invoices/`),
-          fetch(`${API_BASE}/accounts/payments/`),
-          fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
-          fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
-          fetch(`${API_BASE}/accounts/financial-statements/`)
-        ]);
+      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
+        fetch(`${API_BASE}/selling/customers/`),
+        fetch(`${API_BASE}/buying/suppliers/`),
+        fetch(`${API_BASE}/stock/items/`),
+        fetch(`${API_BASE}/selling/invoices/`),
+        fetch(`${API_BASE}/buying/invoices/`),
+        fetch(`${API_BASE}/accounts/payments/`),
+        fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
+        fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
+        fetch(`${API_BASE}/accounts/financial-statements/`)
+      ]);
 
-        // A newer request has started in the meantime - drop this response so a
-        // slow reply cannot overwrite fresher data.
-        if (seq !== requestSeq.current) return;
+      if (seq !== requestSeq.current) return;
 
-        const failed: string[] = [];
-        const read = async (label: string, res: Response) => {
-          if (!res.ok) { failed.push(label); return null; }
-          try { return await res.json(); }
-          catch { failed.push(label); return null; }
-        };
+      const failed: string[] = [];
+      const read = async <T,>(label: string, res: Response): Promise<T | null> => {
+        if (!res.ok) { failed.push(label); return null; }
+        try { return (await res.json()) as T; }
+        catch { failed.push(label); return null; }
+      };
 
-        const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
-          read('Customers', resCust),
-          read('Suppliers', resSupp),
-          read('Items', resItems),
-          read('Sales invoices', resInvoices),
-          read('Purchase bills', resPurch),
-          read('Payments', resPay),
-          read('General ledger', resGL),
-          read('Stock ledger', resStock),
-          read('Financial statements', resFin),
-        ]);
+      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
+        read<Customer[]>('Customers', resCust),
+        read<Supplier[]>('Suppliers', resSupp),
+        read<Item[]>('Items', resItems),
+        read<SalesInvoice[]>('Sales invoices', resInvoices),
+        read<PurchaseInvoice[]>('Purchase bills', resPurch),
+        read<PaymentEntry[]>('Payments', resPay),
+        read<GLEntryRow[]>('General ledger', resGL),
+        read<StockLedgerRow[]>('Stock ledger', resStock),
+        read<FinancialStatements>('Financial statements', resFin),
+      ]);
 
-        setLoadError(null);
-        if (cust) setCustomers(cust);
-        if (supp) setSuppliers(supp);
-        if (itemList) setItems(itemList);
-        if (inv) setInvoices(inv);
-        if (pur) setPurchases(pur);
-        if (pay) setPayments(pay);
-        if (gl) setGlEntries(gl);
-        if (stock) setStockLedger(stock);
-        if (fin) setFinance(fin);
+      if (cust) setCustomers(cust);
+      if (supp) setSuppliers(supp);
+      if (itemList) setItems(itemList);
+      if (inv) setInvoices(inv);
+      if (pur) setPurchases(pur);
+      if (pay) setPayments(pay);
+      if (gl) setGlEntries(gl);
+      if (stock) setStockLedger(stock);
+      if (fin) setFinance(fin);
 
-        if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
-      } catch (err) {
-        if (seq !== requestSeq.current) return;
-        console.error("API error:", err);
-        setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
-      }
-    });
+      if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
+    } catch (err) {
+      if (seq !== requestSeq.current) return;
+      console.error("API error:", err);
+      setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
+    }
   }, [glAccountFilter, glPartyFilter, stockItemFilter]);
 
-  // `loadData` already pulls every dataset, so switching tabs has nothing new
-  // to fetch - it only re-runs when one of the ledger filters changes.
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    void loadData();
+  }, [activeTab, loadData]);
 
   // Safe Deletion Handlers
-  const handleDeleteInvoice = async (id: number | undefined, invNo: string) => {
-    if (id === undefined) { alert('This invoice has no id, so it cannot be deleted.'); return; }
+  const handleDeleteInvoice = async (id: number, invNo: string) => {
     if (!window.confirm(`Are you sure you want to delete Sales Invoice #${invNo}? This will automatically reverse stock deduction and General Ledger entries.`)) return;
     try {
       const res = await fetch(`${API_BASE}/selling/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete invoice');
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
-  const handleDeletePurchase = async (id: number | undefined, billNo: string) => {
-    if (id === undefined) { alert('This purchase bill has no id, so it cannot be deleted.'); return; }
+  const handleDeletePurchase = async (id: number, billNo: string) => {
     if (!window.confirm(`Are you sure you want to delete Purchase Bill #${billNo}? This will automatically deduct added stock and reverse GL liabilities.`)) return;
     try {
       const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete purchase bill');
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const handleSaveCustomer = async (e: FormEvent<HTMLFormElement>) => {
@@ -322,8 +307,8 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to save customer');
       setShowCustomerModal(false);
       setEditingId(null);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const handleSaveSupplier = async (e: FormEvent<HTMLFormElement>) => {
@@ -337,8 +322,8 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to save supplier');
       setShowSupplierModal(false);
       setEditingId(null);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const handleSaveItem = async (e: FormEvent<HTMLFormElement>) => {
@@ -348,30 +333,20 @@ export default function App() {
       const method = editingId ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json' },
-        // current_stock is derived from the Stock Ledger - the backend
-        // recomputes it from the ledger on every read - so it is never sent
-        // from the client.
-        body: JSON.stringify({
-          item_code: itemForm.item_code,
-          item_name: itemForm.item_name,
-          category: itemForm.category,
-          unit: itemForm.unit,
-          standard_rate: parseFloat(itemForm.standard_rate) || 0
-        })
+        body: JSON.stringify({ ...itemForm, standard_rate: parseFloat(itemForm.standard_rate) || 0, current_stock: parseFloat(itemForm.current_stock) || 0 })
       });
       if (!res.ok) throw new Error('Failed to save item');
       setShowItemModal(false);
       setEditingId(null);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
-  // Line-item helpers shared by the sales and purchase forms.
   const buildLines = (lines: LineForm[]) =>
     lines.map(l => {
       const quantity = parseFloat(l.quantity) || 0;
       const rate = parseFloat(l.rate) || 0;
-      return { item: parseInt(l.item_id), quantity, rate, amount: (quantity * rate).toFixed(2) };
+      return { item: parseInt(l.item_id, 10), quantity, rate, amount: (quantity * rate).toFixed(2) };
     });
 
   const validateLines = (lines: LineForm[]): boolean => {
@@ -385,7 +360,7 @@ export default function App() {
 
   const handleSaveInvoice = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id));
+    const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id, 10));
     if (!selCust) { alert('Select a customer'); return; }
     if (!validateLines(invoiceForm.lines)) return;
 
@@ -406,13 +381,13 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to save sales invoice');
       setShowInvoiceModal(false);
       setEditingId(null);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const handleSavePurchase = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const selSupp = suppliers.find(s => s.id === parseInt(purchaseForm.supplier_id));
+    const selSupp = suppliers.find(s => s.id === parseInt(purchaseForm.supplier_id, 10));
     if (!selSupp) { alert('Select a supplier'); return; }
     if (!validateLines(purchaseForm.lines)) return;
 
@@ -433,16 +408,14 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to save purchase bill');
       setShowPurchaseModal(false);
       setEditingId(null);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const handleSavePayment = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const amount = parseFloat(paymentForm.paid_amount);
     if (!paymentForm.party_name || !amount || amount <= 0) { alert('Enter valid party and amount'); return; }
-    // Derive party_type from payment_type so the stored entry can never
-    // disagree with the party it was paid to or received from.
     const partyType = paymentForm.payment_type === 'Receive' ? 'Customer' : 'Supplier';
     try {
       const res = await fetch(`${API_BASE}/accounts/payments/`, {
@@ -451,8 +424,8 @@ export default function App() {
       });
       if (!res.ok) throw new Error('Payment failed');
       setShowPaymentModal(false);
-      loadData();
-    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
 
   const allPartyNames = Array.from(new Set([
@@ -464,7 +437,6 @@ export default function App() {
   const totalCredit = glEntries.reduce((sum, r) => sum + Number(r.credit), 0);
   const closingBalance = glEntries.length > 0 ? glEntries[glEntries.length - 1].balance : 0;
 
-  // Live totals for the invoice / purchase forms
   const invoiceNet = sumLines(invoiceForm.lines);
   const invoiceTax = (invoiceNet * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
   const purchaseNet = sumLines(purchaseForm.lines);
@@ -512,7 +484,6 @@ export default function App() {
 
       {/* Main Content Area */}
       <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto' }}>
-        {/* Load status banner - a failed request must never look like "no data" */}
         {loadError && (
           <div
             role="alert"
@@ -525,7 +496,7 @@ export default function App() {
             <X size={16} />
             <span style={{ flex: 1 }}>{loadError}</span>
             <button
-              onClick={() => loadData()}
+              onClick={() => void loadData()}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', fontWeight: '600' }}
             >
               <RefreshCw size={13} /> Retry
@@ -537,6 +508,7 @@ export default function App() {
             <RefreshCw size={14} className="spin" /> Loading data...
           </div>
         )}
+
         {/* TAB 1: SELLING */}
         {activeTab === 'selling' && (
           <div>
@@ -571,8 +543,6 @@ export default function App() {
                             posting_date: row.posting_date,
                             tax_rate: inferTaxRate(row.net_total, row.tax_amount),
                             status: row.status || 'Submitted',
-                            // Load every line, not just the first - the backend
-                            // deletes all lines and recreates them from this list.
                             lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
                           });
                           setShowInvoiceModal(true);
@@ -582,7 +552,7 @@ export default function App() {
                         <Edit2 size={12} /> Edit
                       </button>
                       <button 
-                        onClick={() => handleDeleteInvoice(row.id, row.invoice_number)}
+                        onClick={() => { if (row.id !== undefined) void handleDeleteInvoice(row.id, row.invoice_number); }}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
                         <Trash2 size={12} /> Delete
@@ -631,8 +601,6 @@ export default function App() {
                             posting_date: row.posting_date,
                             tax_rate: inferTaxRate(row.net_total, row.tax_amount),
                             status: row.status || 'Submitted',
-                            // Load every line, not just the first - the backend
-                            // deletes all lines and recreates them from this list.
                             lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
                           });
                           setShowPurchaseModal(true);
@@ -642,7 +610,7 @@ export default function App() {
                         <Edit2 size={12} /> Edit
                       </button>
                       <button 
-                        onClick={() => handleDeletePurchase(row.id, row.bill_number)}
+                        onClick={() => { if (row.id !== undefined) void handleDeletePurchase(row.id, row.bill_number); }}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
                         <Trash2 size={12} /> Delete
@@ -819,7 +787,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Filter Bar */}
             <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
                 <Filter size={16} /> Filter by Item:
@@ -1072,7 +1039,7 @@ export default function App() {
       )}
 
       {/* Financial Statements Print Modal */}
-      {showFinancePrintModal && (
+      {showFinancePrintModal && finance && (
         <FinancialReportPrintModal finance={finance} onClose={() => setShowFinancePrintModal(false)} />
       )}
 
@@ -1154,7 +1121,10 @@ export default function App() {
             <form onSubmit={handleSaveItem} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate (Rs.)</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly title="Derived from the Stock Ledger - it updates automatically as purchases and sales are posted." style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /><span style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Derived from Stock Ledger</span></div></div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate (Rs.)</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock (Ledger Synced)</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowItemModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
                 <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Item' : 'Save Item'}</button>
@@ -1214,8 +1184,6 @@ export default function App() {
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Payment Type</label>
                   <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => {
                     const type = e.target.value as 'Receive' | 'Pay';
-                    // party_type follows payment_type, and the selected party is
-                    // cleared because the two lists are disjoint.
                     setPaymentForm(prev => ({
                       ...prev,
                       payment_type: type,
@@ -1229,7 +1197,7 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Mode</label>
-                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as PaymentEntry['mode_of_payment'] })}>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as 'Bank' | 'Cash' | 'Cheque' })}>
                     <option value="Bank">Bank Transfer / UPI</option>
                     <option value="Cash">Cash</option>
                     <option value="Cheque">Cheque</option>
@@ -1250,7 +1218,6 @@ export default function App() {
                 <input type="number" step="0.01" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.paid_amount} onChange={e => setPaymentForm({ ...paymentForm, paid_amount: e.target.value })} />
               </div>
 
-              {/* Reference / UTR Number Field */}
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Reference / UTR / Cheque No</label>
                 <input 
@@ -1261,7 +1228,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Remarks / Narration Field */}
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Remarks / Narration</label>
                 <input 
@@ -1283,4 +1249,3 @@ export default function App() {
     </div>
   );
 }
-
