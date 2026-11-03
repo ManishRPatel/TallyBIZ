@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useTransition, useRef } from 'react';
+import type { CSSProperties, FC, FormEvent } from 'react';
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
@@ -57,13 +58,13 @@ const lineFromItem = (item: { item: number; quantity: number | string; rate: num
   rate: String(item.rate)
 });
 
-const fieldStyle: React.CSSProperties = {
+const fieldStyle: CSSProperties = {
   width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box'
 };
 
 // Defined at module scope on purpose: a component declared inside App() would
 // be a new type on every render, remounting the inputs and dropping focus.
-const LineItemsEditor: React.FC<{
+const LineItemsEditor: FC<{
   lines: LineForm[];
   items: Item[];
   showStock: boolean;
@@ -290,7 +291,8 @@ export default function App() {
   }, [loadData]);
 
   // Safe Deletion Handlers
-  const handleDeleteInvoice = async (id: number, invNo: string) => {
+  const handleDeleteInvoice = async (id: number | undefined, invNo: string) => {
+    if (id === undefined) { alert('This invoice has no id, so it cannot be deleted.'); return; }
     if (!window.confirm(`Are you sure you want to delete Sales Invoice #${invNo}? This will automatically reverse stock deduction and General Ledger entries.`)) return;
     try {
       const res = await fetch(`${API_BASE}/selling/invoices/${id}/`, { method: 'DELETE' });
@@ -299,7 +301,8 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleDeletePurchase = async (id: number, billNo: string) => {
+  const handleDeletePurchase = async (id: number | undefined, billNo: string) => {
+    if (id === undefined) { alert('This purchase bill has no id, so it cannot be deleted.'); return; }
     if (!window.confirm(`Are you sure you want to delete Purchase Bill #${billNo}? This will automatically deduct added stock and reverse GL liabilities.`)) return;
     try {
       const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
@@ -308,7 +311,7 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveCustomer = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSaveCustomer = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/selling/customers/${editingId}/` : `${API_BASE}/selling/customers/`;
@@ -323,7 +326,7 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveSupplier = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSaveSupplier = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/buying/suppliers/${editingId}/` : `${API_BASE}/buying/suppliers/`;
@@ -338,7 +341,7 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveItem = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSaveItem = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/stock/items/${editingId}/` : `${API_BASE}/stock/items/`;
@@ -380,7 +383,7 @@ export default function App() {
   const sumLines = (lines: LineForm[]) =>
     lines.reduce((sum, l) => sum + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0), 0);
 
-  const handleSaveInvoice = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSaveInvoice = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id));
     if (!selCust) { alert('Select a customer'); return; }
@@ -407,7 +410,7 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSavePurchase = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSavePurchase = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const selSupp = suppliers.find(s => s.id === parseInt(purchaseForm.supplier_id));
     if (!selSupp) { alert('Select a supplier'); return; }
@@ -434,7 +437,7 @@ export default function App() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSavePayment = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSavePayment = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const amount = parseFloat(paymentForm.paid_amount);
     if (!paymentForm.party_name || !amount || amount <= 0) { alert('Enter valid party and amount'); return; }
@@ -579,7 +582,7 @@ export default function App() {
                         <Edit2 size={12} /> Edit
                       </button>
                       <button 
-                        onClick={() => handleDeleteInvoice(row.id!, row.invoice_number)}
+                        onClick={() => handleDeleteInvoice(row.id, row.invoice_number)}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
                         <Trash2 size={12} /> Delete
@@ -639,7 +642,7 @@ export default function App() {
                         <Edit2 size={12} /> Edit
                       </button>
                       <button 
-                        onClick={() => handleDeletePurchase(row.id!, row.bill_number)}
+                        onClick={() => handleDeletePurchase(row.id, row.bill_number)}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
                         <Trash2 size={12} /> Delete
