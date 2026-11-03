@@ -100,6 +100,17 @@ export interface PaymentEntry {
   remarks?: string;
 }
 
+export interface FinancialStatements {
+  income: { sales: number; total_income: number };
+  expense: { purchases: number; total_expense: number };
+  profit: { gross_profit: number; net_profit: number };
+  gst: { input_itc: number; output_liability: number; net_payable: number };
+  balance_sheet: {
+    assets: { bank_cash: number; debtors_receivable: number; total_assets: number };
+    liabilities: { creditors_payable: number; gst_payable: number; total_liabilities: number };
+  };
+}
+
 export interface StockLedgerRow {
   id: number;
   posting_date: string;

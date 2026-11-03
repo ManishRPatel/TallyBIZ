@@ -136,7 +136,7 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
                 fontWeight: '600',
               }}
             >
-              <Printer size="{16}"/> Print / Save PDF
+              <Printer size={16} /> Print / Save PDF
             </button>
             <button
               onClick={onClose}
@@ -153,7 +153,7 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
                 fontWeight: '600',
               }}
             >
-              <X size="{16}"/> Close
+              <X size={16} /> Close
             </button>
           </div>
         </div>

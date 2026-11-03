@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
 import { X, Printer } from 'lucide-react';
+import type { FinancialStatements } from '../types/erp';
 
 interface FinancialReportPrintModalProps {
-  finance: any;
+  finance: FinancialStatements | null;
   onClose: () => void;
 }
 
@@ -119,7 +120,7 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
                 fontWeight: '600',
               }}
             >
-              <Printer size="{16}"/> Print / Save PDF
+              <Printer size={16} /> Print / Save PDF
             </button>
             <button
               onClick={onClose}
@@ -136,7 +137,7 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
                 fontWeight: '600',
               }}
             >
-              <X size="{16}"/> Close
+              <X size={16} /> Close
             </button>
           </div>
         </div>

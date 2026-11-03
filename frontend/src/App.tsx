@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useTransition, useRef } from 'react';
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
-import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow } from './types/erp';
+import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
 import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers } from 'lucide-react';
 import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
 import { PaymentPrintModal } from './components/PaymentPrintModal';
@@ -154,11 +154,14 @@ export default function App() {
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [glEntries, setGlEntries] = useState<GLEntryRow[]>([]);
   const [stockLedger, setStockLedger] = useState<StockLedgerRow[]>([]);
-  const [finance, setFinance] = useState<any>(null);
+  const [finance, setFinance] = useState<FinancialStatements | null>(null);
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
 
   // Request status
-  const [loading, setLoading] = useState(false);
+  // `loading` is the transition's pending flag: React keeps it true for the
+  // whole async data load, so the spinner tracks the request without any
+  // effect-body setState.
+  const [loading, startTransition] = useTransition();
   const [loadError, setLoadError] = useState<string | null>(null);
   const requestSeq = useRef(0);
 
@@ -210,76 +213,81 @@ export default function App() {
     voucher_no: 'PAY-0001', payment_type: 'Receive' as 'Receive' | 'Pay', posting_date: new Date().toISOString().split('T')[0], party_type: 'Customer', party_name: '', mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque', paid_amount: '0', reference_no: '', remarks: ''
   });
 
-  const loadData = async () => {
+  // `loadData` reads the current filter values, so it is a `useCallback` over
+  // those filters. The fetch itself runs inside a transition: React keeps
+  // `loading` true for the whole async transition, which gives us the spinner
+  // without setting state synchronously in the effect body.
+  const loadData = useCallback(() => {
     const seq = ++requestSeq.current;
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const glParams = new URLSearchParams();
-      if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
-      if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
+    startTransition(async () => {
+      try {
+        const glParams = new URLSearchParams();
+        if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
+        if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
 
-      const stockParams = new URLSearchParams();
-      if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
+        const stockParams = new URLSearchParams();
+        if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
 
-      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
-        fetch(`${API_BASE}/selling/customers/`),
-        fetch(`${API_BASE}/buying/suppliers/`),
-        fetch(`${API_BASE}/stock/items/`),
-        fetch(`${API_BASE}/selling/invoices/`),
-        fetch(`${API_BASE}/buying/invoices/`),
-        fetch(`${API_BASE}/accounts/payments/`),
-        fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
-        fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
-        fetch(`${API_BASE}/accounts/financial-statements/`)
-      ]);
+        const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
+          fetch(`${API_BASE}/selling/customers/`),
+          fetch(`${API_BASE}/buying/suppliers/`),
+          fetch(`${API_BASE}/stock/items/`),
+          fetch(`${API_BASE}/selling/invoices/`),
+          fetch(`${API_BASE}/buying/invoices/`),
+          fetch(`${API_BASE}/accounts/payments/`),
+          fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
+          fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
+          fetch(`${API_BASE}/accounts/financial-statements/`)
+        ]);
 
-      // A newer request has started in the meantime - drop this response so a
-      // slow reply cannot overwrite fresher data.
-      if (seq !== requestSeq.current) return;
+        // A newer request has started in the meantime - drop this response so a
+        // slow reply cannot overwrite fresher data.
+        if (seq !== requestSeq.current) return;
 
-      const failed: string[] = [];
-      const read = async (label: string, res: Response) => {
-        if (!res.ok) { failed.push(label); return null; }
-        try { return await res.json(); }
-        catch { failed.push(label); return null; }
-      };
+        const failed: string[] = [];
+        const read = async (label: string, res: Response) => {
+          if (!res.ok) { failed.push(label); return null; }
+          try { return await res.json(); }
+          catch { failed.push(label); return null; }
+        };
 
-      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
-        read('Customers', resCust),
-        read('Suppliers', resSupp),
-        read('Items', resItems),
-        read('Sales invoices', resInvoices),
-        read('Purchase bills', resPurch),
-        read('Payments', resPay),
-        read('General ledger', resGL),
-        read('Stock ledger', resStock),
-        read('Financial statements', resFin),
-      ]);
+        const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
+          read('Customers', resCust),
+          read('Suppliers', resSupp),
+          read('Items', resItems),
+          read('Sales invoices', resInvoices),
+          read('Purchase bills', resPurch),
+          read('Payments', resPay),
+          read('General ledger', resGL),
+          read('Stock ledger', resStock),
+          read('Financial statements', resFin),
+        ]);
 
-      if (cust) setCustomers(cust);
-      if (supp) setSuppliers(supp);
-      if (itemList) setItems(itemList);
-      if (inv) setInvoices(inv);
-      if (pur) setPurchases(pur);
-      if (pay) setPayments(pay);
-      if (gl) setGlEntries(gl);
-      if (stock) setStockLedger(stock);
-      if (fin) setFinance(fin);
+        setLoadError(null);
+        if (cust) setCustomers(cust);
+        if (supp) setSuppliers(supp);
+        if (itemList) setItems(itemList);
+        if (inv) setInvoices(inv);
+        if (pur) setPurchases(pur);
+        if (pay) setPayments(pay);
+        if (gl) setGlEntries(gl);
+        if (stock) setStockLedger(stock);
+        if (fin) setFinance(fin);
 
-      if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
-    } catch (err) {
-      if (seq !== requestSeq.current) return;
-      console.error("API error:", err);
-      setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
-    } finally {
-      if (seq === requestSeq.current) setLoading(false);
-    }
-  };
+        if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
+      } catch (err) {
+        if (seq !== requestSeq.current) return;
+        console.error("API error:", err);
+        setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
+      }
+    });
+  }, [glAccountFilter, glPartyFilter, stockItemFilter]);
 
+  // `loadData` already pulls every dataset, so switching tabs has nothing new
+  // to fetch - it only re-runs when one of the ledger filters changes.
   useEffect(() => {
     loadData();
-  }, [activeTab, glAccountFilter, glPartyFilter, stockItemFilter]);
+  }, [loadData]);
 
   // Safe Deletion Handlers
   const handleDeleteInvoice = async (id: number, invNo: string) => {
@@ -288,7 +296,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/selling/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete invoice');
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
   const handleDeletePurchase = async (id: number, billNo: string) => {
@@ -297,10 +305,10 @@ export default function App() {
       const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete purchase bill');
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveCustomer = async (e: React.FormEvent) => {
+  const handleSaveCustomer = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/selling/customers/${editingId}/` : `${API_BASE}/selling/customers/`;
@@ -312,10 +320,10 @@ export default function App() {
       setShowCustomerModal(false);
       setEditingId(null);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveSupplier = async (e: React.FormEvent) => {
+  const handleSaveSupplier = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/buying/suppliers/${editingId}/` : `${API_BASE}/buying/suppliers/`;
@@ -327,23 +335,32 @@ export default function App() {
       setShowSupplierModal(false);
       setEditingId(null);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSaveItem = async (e: React.FormEvent) => {
+  const handleSaveItem = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const url = editingId ? `${API_BASE}/stock/items/${editingId}/` : `${API_BASE}/stock/items/`;
       const method = editingId ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...itemForm, standard_rate: parseFloat(itemForm.standard_rate) || 0, current_stock: parseFloat(itemForm.current_stock) || 0 })
+        // current_stock is derived from the Stock Ledger - the backend
+        // recomputes it from the ledger on every read - so it is never sent
+        // from the client.
+        body: JSON.stringify({
+          item_code: itemForm.item_code,
+          item_name: itemForm.item_name,
+          category: itemForm.category,
+          unit: itemForm.unit,
+          standard_rate: parseFloat(itemForm.standard_rate) || 0
+        })
       });
       if (!res.ok) throw new Error('Failed to save item');
       setShowItemModal(false);
       setEditingId(null);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
   // Line-item helpers shared by the sales and purchase forms.
@@ -363,7 +380,7 @@ export default function App() {
   const sumLines = (lines: LineForm[]) =>
     lines.reduce((sum, l) => sum + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0), 0);
 
-  const handleSaveInvoice = async (e: React.FormEvent) => {
+  const handleSaveInvoice = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id));
     if (!selCust) { alert('Select a customer'); return; }
@@ -387,10 +404,10 @@ export default function App() {
       setShowInvoiceModal(false);
       setEditingId(null);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSavePurchase = async (e: React.FormEvent) => {
+  const handleSavePurchase = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const selSupp = suppliers.find(s => s.id === parseInt(purchaseForm.supplier_id));
     if (!selSupp) { alert('Select a supplier'); return; }
@@ -414,10 +431,10 @@ export default function App() {
       setShowPurchaseModal(false);
       setEditingId(null);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
-  const handleSavePayment = async (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const amount = parseFloat(paymentForm.paid_amount);
     if (!paymentForm.party_name || !amount || amount <= 0) { alert('Enter valid party and amount'); return; }
@@ -432,7 +449,7 @@ export default function App() {
       if (!res.ok) throw new Error('Payment failed');
       setShowPaymentModal(false);
       loadData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Unexpected error'); }
   };
 
   const allPartyNames = Array.from(new Set([
@@ -1134,7 +1151,7 @@ export default function App() {
             <form onSubmit={handleSaveItem} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate (Rs.)</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.current_stock} onChange={e => setItemForm({ ...itemForm, current_stock: e.target.value })} /></div></div>
+              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate (Rs.)</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly title="Derived from the Stock Ledger - it updates automatically as purchases and sales are posted." style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /><span style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Derived from Stock Ledger</span></div></div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowItemModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
                 <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Item' : 'Save Item'}</button>
@@ -1209,7 +1226,7 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Mode</label>
-                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as any })}>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as PaymentEntry['mode_of_payment'] })}>
                     <option value="Bank">Bank Transfer / UPI</option>
                     <option value="Cash">Cash</option>
                     <option value="Cheque">Cheque</option>
