@@ -170,9 +170,9 @@ const getDueStatus = (postingDate: string, dueDate?: string | null) => {
   if (dueDate) {
     targetDate = new Date(dueDate);
   } else {
-    // Jo due_date na set hoy to default 15 days credit period ganashe
+    // Jo due_date na set hoy to default 30 days credit period ganashe
     targetDate = new Date(postingDate);
-    targetDate.setDate(targetDate.getDate() + 15);
+    targetDate.setDate(targetDate.getDate() + 30);
   }
   targetDate.setHours(0, 0, 0, 0);
 
@@ -343,20 +343,25 @@ export default function App() {
     invoice_number: 'INV-0001', 
     customer_id: '', 
     posting_date: new Date().toISOString().split('T')[0],
-    due_date: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0], // 15 days credit
+    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0], // 30 days credit
     tax_rate: '18', 
     status: 'Submitted', 
     lines: [newLine()]
   }));
 
-  const [purchaseForm, setPurchaseForm] = useState(() => ({
-    bill_number: 'PUR-0001', supplier_id: '', posting_date: new Date().toISOString().split('T')[0],
-    tax_rate: '18', status: 'Submitted', lines: [newLine()]
-  }));
-
   const [paymentForm, setPaymentForm] = useState({
     voucher_no: 'PAY-0001', payment_type: 'Receive' as 'Receive' | 'Pay', posting_date: new Date().toISOString().split('T')[0], party_type: 'Customer', party_name: '', mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque', paid_amount: '0', reference_no: '', remarks: ''
   });
+
+  const [purchaseForm, setPurchaseForm] = useState(() => ({
+    bill_number: 'PUR-0001', 
+    supplier_id: '', 
+    posting_date: new Date().toISOString().split('T')[0],
+    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0], // 30 days credit
+    tax_rate: '18', 
+    status: 'Submitted', 
+    lines: [newLine()]
+  }));
 
   const loadData = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -623,9 +628,16 @@ export default function App() {
       const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bill_number: purchaseForm.bill_number, supplier: selSupp.id, supplier_name: selSupp.supplier_name,
-          posting_date: purchaseForm.posting_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
-          status: purchaseForm.status, items: lineItems
+          bill_number: purchaseForm.bill_number, 
+          supplier: selSupp.id, 
+          supplier_name: selSupp.supplier_name,
+          posting_date: purchaseForm.posting_date, 
+          due_date: purchaseForm.due_date, // <--- aa line add karo
+          net_total: net.toFixed(2), 
+          tax_amount: tax.toFixed(2), 
+          grand_total: (net + tax).toFixed(2),
+          status: purchaseForm.status, 
+          items: lineItems
         })
       });
       if (!res.ok) throw new Error('Failed to save purchase bill');
@@ -974,11 +986,79 @@ export default function App() {
               </div>
             </div>
 
+            {/* Supplier Overdue Payment Reminder Banner */}
+            {(() => {
+              const overdueBills = purchases.filter(pur => {
+                const statusInfo = purchaseStatusMap[pur.id || 0];
+                if (statusInfo?.status === 'Paid') return false;
+                const dueInfo = getDueStatus(pur.posting_date, (pur as any).due_date);
+                return dueInfo.isOverdue;
+              });
+
+              const totalOverduePayable = overdueBills.reduce((sum, pur) => {
+                const balance = purchaseStatusMap[pur.id || 0]?.balance ?? parseFloat(String(pur.grand_total));
+                return sum + balance;
+              }, 0);
+
+              if (overdueBills.length === 0) return null;
+
+              return (
+                <div style={{
+                  background: '#fff5f5',
+                  border: '1px solid #fecaca',
+                  borderRadius: '10px',
+                  padding: '14px 20px',
+                  marginBottom: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '22px' }}>⚠️</span>
+                    <div>
+                      <strong style={{ color: '#991b1b', fontSize: '14px' }}>
+                        Supplier Payment Reminder: {overdueBills.length} {overdueBills.length === 1 ? 'Bill is' : 'Bills are'} Overdue!
+                      </strong>
+                      <p style={{ margin: '2px 0 0 0', color: '#7f1d1d', fontSize: '12px' }}>
+                        Total overdue payables: <strong>Rs. {totalOverduePayable.toFixed(2)}</strong> (Suppliers: {overdueBills.map(p => p.supplier_name).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             <DataTable<PurchaseInvoice>
               columns={[
                 { header: 'Bill #', accessor: 'bill_number' },
                 { header: 'Supplier', accessor: 'supplier_name' },
                 { header: 'Posting Date', accessor: 'posting_date' },
+                {
+                  header: 'Due Date',
+                  accessor: (row) => {
+                    const dueInfo = getDueStatus(row.posting_date, (row as any).due_date);
+                    const paymentInfo = purchaseStatusMap[row.id || 0];
+                    const isPaid = paymentInfo?.status === 'Paid';
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontWeight: '500' }}>{dueInfo.dueDate}</span>
+                        {!isPaid && (
+                          dueInfo.isOverdue ? (
+                            <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', width: 'fit-content' }}>
+                              ⚠️ {dueInfo.text}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '11px', color: '#64748b' }}>
+                              {dueInfo.text}
+                            </span>
+                          )
+                        )}
+                      </div>
+                    );
+                  }
+                },
                 { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
                 { header: 'Input Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Total Payable (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
@@ -1019,6 +1099,7 @@ export default function App() {
                             bill_number: row.bill_number,
                             supplier_id: row.supplier ? row.supplier.toString() : '',
                             posting_date: row.posting_date,
+                            due_date: (row as any).due_date || row.posting_date,
                             tax_rate: inferTaxRate(row.net_total, row.tax_amount),
                             status: row.status || 'Submitted',
                             lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
@@ -1664,6 +1745,7 @@ export default function App() {
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Bill #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={purchaseForm.bill_number} onChange={e => setPurchaseForm({ ...purchaseForm, bill_number: e.target.value })} /></div>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Posting Date</label><input type="date" required style={fieldStyle} value={purchaseForm.posting_date} onChange={e => setPurchaseForm({ ...purchaseForm, posting_date: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={purchaseForm.due_date} onChange={e => setPurchaseForm({ ...purchaseForm, due_date: e.target.value })} /></div>
                 <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={purchaseForm.tax_rate} onChange={e => setPurchaseForm({ ...purchaseForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
               </div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Supplier *</label><select required style={fieldStyle} value={purchaseForm.supplier_id} onChange={e => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })}><option value="">-- Choose Supplier --</option>{suppliers.map(s => (<option key={s.id} value={s.id}>{s.supplier_name}</option>))}</select></div>
