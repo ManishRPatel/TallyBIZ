@@ -38,8 +38,43 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             'items'
         ]
 
+    def validate(self, data):
+        items_data = data.get('items')
+
+        # Defect #2 Fix: Items hova farajiyat chhe
+        if self.instance is None and (not items_data or len(items_data) == 0):
+            raise serializers.ValidationError({"items": "At least one item is required."})
+
+        if items_data:
+            # Defect #6 Fix: Stock negative na thavo joiye
+            for row in items_data:
+                item_obj = row['item']
+                qty = Decimal(str(row['quantity']))
+                if qty <= Decimal('0.00'):
+                    raise serializers.ValidationError({"items": "Quantity must be greater than zero."})
+
+                available = item_obj.current_stock
+                if self.instance:
+                    old_item = self.instance.items.filter(item=item_obj).first()
+                    if old_item:
+                        available += old_item.quantity
+
+                if qty > available:
+                    raise serializers.ValidationError({
+                        "items": f"Insufficient stock for '{item_obj.item_name}'. Available: {available}, Requested: {qty}."
+                    })
+
+            # Defect #4 Fix: Net total ane Grand total nu calculation backend par check karo (400 validation error)
+            calc_net = sum(Decimal(str(r['quantity'])) * Decimal(str(r['rate'])) for r in items_data)
+            tax_amt = Decimal(str(data.get('tax_amount', 0)))
+            calc_grand = calc_net + tax_amt
+            
+            data['net_total'] = calc_net
+            data['grand_total'] = calc_grand
+
+        return data
+
     def _post_stock_and_gl(self, invoice, items_data):
-        # 1. Items સાચવો અને Stock ઓછો કરો
         for item_data in items_data:
             SalesInvoiceItem.objects.create(invoice=invoice, **item_data)
             item_obj = item_data['item']
@@ -58,7 +93,6 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 valuation_rate=item_data['rate']
             )
 
-        # 2. GL Entries
         gl_map = [
             {
                 "posting_date": invoice.posting_date,
@@ -113,9 +147,12 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items', None)
 
-        # 1. જૂની Stock Ledger revert કરો (સ્ટોક પાછો વધારો)
-        old_items = instance.items.all()
-        for old_item in old_items:
+        # Jo items na moklya hoy to update atkavi do (Defect #2 Fix)
+        if items_data is None:
+            raise serializers.ValidationError({"items": "Items list is required for invoice update."})
+
+        # 1. Juno stock pacho vadharo
+        for old_item in instance.items.all():
             item_obj = old_item.item
             item_obj.current_stock += old_item.quantity
             item_obj.save()
@@ -124,13 +161,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         GLEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=instance.invoice_number).delete()
         instance.items.all().delete()
 
-        # 2. નવી વિગતો સેવ કરો
+        # 2. Navi details save karo
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # 3. નવો સ્ટોક અને નવી GL એન્ટ્રીઓ બનાવો
-        if items_data:
-            self._post_stock_and_gl(instance, items_data)
-
+        # 3. Navo stock ane ledger banavo
+        self._post_stock_and_gl(instance, items_data)
         return instance

@@ -1,14 +1,71 @@
 from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.db.models import Sum, Q
+from django.db.models import Sum
+from selling.models import SalesInvoice
+from buying.models import PurchaseInvoice
+from django.db.models.functions import TruncMonth
 from decimal import Decimal
 from .models import GLEntry, PaymentEntry
 from .serializers import PaymentEntrySerializer
+from django.db import transaction
 
 class PaymentEntryListCreateAPIView(generics.ListCreateAPIView):
     queryset = PaymentEntry.objects.all().order_by('-id')
     serializer_class = PaymentEntrySerializer
+
+class PaymentEntryRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = PaymentEntry.objects.all()
+    serializer_class = PaymentEntrySerializer
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        # Payment delete thay tyare teni sathe jodayeli GL Entries pan delete karo
+        GLEntry.objects.filter(voucher_type='Payment Entry', voucher_no=instance.voucher_no).delete()
+        instance.delete()
+
+class GSTReturnSummaryAPIView(APIView):
+    def get(self, request):
+        # is_cancelled ni jagya par status='Submitted' vaporo athava filter remove karo
+        sales_gst = SalesInvoice.objects.filter(status='Submitted').annotate(
+            month=TruncMonth('posting_date')
+        ).values('month').annotate(
+            total_tax=Sum('tax_amount'),
+            total_net=Sum('net_total')
+        ).order_by('month')
+
+        purchase_gst = PurchaseInvoice.objects.filter(status='Submitted').annotate(
+            month=TruncMonth('posting_date')
+        ).values('month').annotate(
+            total_tax=Sum('tax_amount'),
+            total_net=Sum('net_total')
+        ).order_by('month')
+
+        summary_map = {}
+
+        for s in sales_gst:
+            m_str = s['month'].strftime('%Y-%m') if s['month'] else 'Unknown'
+            if m_str not in summary_map:
+                summary_map[m_str] = {'month': m_str, 'output_tax': 0, 'input_itc': 0, 'sales_net': 0, 'purchase_net': 0}
+            summary_map[m_str]['output_tax'] = float(s['total_tax'] or 0)
+            summary_map[m_str]['sales_net'] = float(s['total_net'] or 0)
+
+        for p in purchase_gst:
+            m_str = p['month'].strftime('%Y-%m') if p['month'] else 'Unknown'
+            if m_str not in summary_map:
+                summary_map[m_str] = {'month': m_str, 'output_tax': 0, 'input_itc': 0, 'sales_net': 0, 'purchase_net': 0}
+            summary_map[m_str]['input_itc'] = float(p['total_tax'] or 0)
+            summary_map[m_str]['purchase_net'] = float(p['total_net'] or 0)
+
+        result = []
+        for m_str in sorted(summary_map.keys(), reverse=True):
+            row = summary_map[m_str]
+            net_payable = row['output_tax'] - row['input_itc']
+            row['net_gst_payable'] = max(0.0, net_payable)
+            row['itc_carry_forward'] = abs(net_payable) if net_payable < 0 else 0.0
+            result.append(row)
+
+        return Response(result)
 
 class GeneralLedgerAPIView(APIView):
     def get(self, request):
@@ -105,3 +162,23 @@ class FinancialStatementsAPIView(APIView):
                 }
             }
         })
+class DashboardSummaryAPIView(APIView):
+    def get(self, request):
+        # Total Sales Calculation
+        total_sales = SalesInvoice.objects.filter(status='Submitted').aggregate(total=Sum('grand_total'))['total'] or 0
+        
+        # Total Purchases Calculation
+        total_purchases = PurchaseInvoice.objects.filter(status='Submitted').aggregate(total=Sum('grand_total'))['total'] or 0
+        
+        # Bank Balance Calculation from General Ledger
+        bank_entries = GLEntry.objects.filter(account='Bank Account')
+        bank_debit = bank_entries.aggregate(total=Sum('debit'))['total'] or 0
+        bank_credit = bank_entries.aggregate(total=Sum('credit'))['total'] or 0
+        bank_balance = float(bank_debit) - float(bank_credit)
+
+        data = {
+            "total_sales": float(total_sales),
+            "total_purchases": float(total_purchases),
+            "bank_balance": bank_balance
+        }
+        return Response(data)

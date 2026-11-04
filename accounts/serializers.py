@@ -4,10 +4,17 @@ from django.db import transaction
 from .models import PaymentEntry
 from .services import make_gl_entries
 
+
 class PaymentEntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentEntry
         fields = '__all__'
+
+    def validate_paid_amount(self, value):
+        # Defect #5 Fix: શૂન્ય કે નેગેટિવ રકમ સ્વીકારવી નહીં
+        if value <= Decimal('0.00'):
+            raise serializers.ValidationError("Paid amount must be strictly greater than zero.")
+        return value
 
     @transaction.atomic
     def create(self, validated_data):
@@ -48,6 +55,8 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
             ]
         else:
             # સપ્લાયરને ચુકવણી (Pay):
+            # 1. Creditors Debit (- દેવું ઘટ્યું)
+            # 2. Bank/Cash Credit (- પૈસા ઘટ્યા)
             gl_map = [
                 {
                     "posting_date": payment.posting_date,

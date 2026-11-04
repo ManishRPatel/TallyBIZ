@@ -2,13 +2,17 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties, type FC, 
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
-import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers } from 'lucide-react';
+import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers, Download } from 'lucide-react';
 import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
 import { PaymentPrintModal } from './components/PaymentPrintModal';
 import { LedgerPrintModal } from './components/LedgerPrintModal';
 import { FinancialReportPrintModal } from './components/FinancialReportPrintModal';
+import { GSTPrintModal } from './components/GSTPrintModal';
+import { MonthlyAnalyticsChart } from './components/MonthlyAnalyticsChart';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
+
+type DashboardSummary = { total_sales: number; total_purchases: number; bank_balance: number };
 
 const GST_SLABS = ['0', '5', '12', '18', '28'];
 
@@ -72,59 +76,76 @@ const LineItemsEditor: FC<{
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      {lines.map((line, idx) => (
-        <div
-          key={line.uid}
-          style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto', gap: '8px', alignItems: 'end' }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <label style={{ fontSize: '12px', fontWeight: '600' }}>Item *</label>
-            <select
-              required
-              style={fieldStyle}
-              value={line.item_id}
-              onChange={e => {
-                const sel = items.find(i => i.id === parseInt(e.target.value, 10));
-                update(idx, { item_id: e.target.value, rate: sel ? String(sel.standard_rate) : line.rate });
+      {lines.map((line, idx) => {
+        const selItem = items.find(i => i.id === parseInt(line.item_id, 10));
+        const availableStock = selItem ? Number(selItem.current_stock) : 0;
+        const currentQty = parseFloat(line.quantity) || 0;
+
+        return (
+          <div
+            key={line.uid}
+            style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto', gap: '8px', alignItems: 'end' }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <label style={{ fontSize: '12px', fontWeight: '600' }}>Item *</label>
+              <select
+                required
+                style={fieldStyle}
+                value={line.item_id}
+                onChange={e => {
+                  const sel = items.find(i => i.id === parseInt(e.target.value, 10));
+                  update(idx, { item_id: e.target.value, rate: sel ? String(sel.standard_rate) : line.rate });
+                }}
+              >
+                <option value="">-- Choose Item --</option>
+                {items.map(it => (
+                  <option key={it.id} value={it.id}>
+                    {it.item_name}{showStock ? ` - Stock: ${it.current_stock}` : ` (${it.item_code})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: '600' }}>Qty *</label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                required
+                style={{ ...fieldStyle, borderColor: (showStock && currentQty > availableStock) ? '#ef4444' : '#cbd5e1' }}
+                value={line.quantity}
+                onChange={e => update(idx, { quantity: e.target.value })}
+              />
+              {showStock && selItem && currentQty > availableStock && (
+                <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>Exceeds stock ({availableStock})</div>
+              )}
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: '600' }}>Rate *</label>
+              <input type="number" min="0" step="0.01" required style={fieldStyle} value={line.rate} onChange={e => update(idx, { rate: e.target.value })} />
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount</label>
+              <div style={{ padding: '8px 0', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                Rs. {((parseFloat(line.quantity) || 0) * (parseFloat(line.rate) || 0)).toFixed(2)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(lines.filter((_, i) => i !== idx))}
+              disabled={lines.length === 1}
+              title="Remove line"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px',
+                borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', color: '#b91c1c',
+                cursor: lines.length === 1 ? 'not-allowed' : 'pointer', opacity: lines.length === 1 ? 0.5 : 1
               }}
             >
-              <option value="">-- Choose Item --</option>
-              {items.map(it => (
-                <option key={it.id} value={it.id}>
-                  {it.item_name}{showStock ? ` - Stock: ${it.current_stock}` : ` (${it.item_code})`}
-                </option>
-              ))}
-            </select>
+              <Trash2 size={15} />
+            </button>
           </div>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: '600' }}>Qty *</label>
-            <input type="number" min="0.01" step="0.01" required style={fieldStyle} value={line.quantity} onChange={e => update(idx, { quantity: e.target.value })} />
-          </div>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: '600' }}>Rate *</label>
-            <input type="number" min="0" step="0.01" required style={fieldStyle} value={line.rate} onChange={e => update(idx, { rate: e.target.value })} />
-          </div>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount</label>
-            <div style={{ padding: '8px 0', fontWeight: '600', whiteSpace: 'nowrap' }}>
-              Rs. {((parseFloat(line.quantity) || 0) * (parseFloat(line.rate) || 0)).toFixed(2)}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => onChange(lines.filter((_, i) => i !== idx))}
-            disabled={lines.length === 1}
-            title="Remove line"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px',
-              borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', color: '#b91c1c',
-              cursor: lines.length === 1 ? 'not-allowed' : 'pointer', opacity: lines.length === 1 ? 0.5 : 1
-            }}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-      ))}
+        );
+      })}
       <button
         type="button"
         onClick={() => onChange([...lines, newLine()])}
@@ -141,8 +162,8 @@ const LineItemsEditor: FC<{
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports'>('selling');
-  
+  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports' | 'gst'>('selling');
+
   // Data states
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -153,16 +174,25 @@ export default function App() {
   const [glEntries, setGlEntries] = useState<GLEntryRow[]>([]);
   const [stockLedger, setStockLedger] = useState<StockLedgerRow[]>([]);
   const [finance, setFinance] = useState<FinancialStatements | null>(null);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({
+    total_sales: 0,
+    total_purchases: 0,
+    bank_balance: 0
+  });
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
+  const [gstData, setGstData] = useState<any[]>([]);
+  const [showGstModal, setShowGstModal] = useState<boolean>(false);
 
   // Request status
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const requestSeq = useRef(0);
 
-  // Filters
+  // Filters & Date Range
   const [glAccountFilter, setGlAccountFilter] = useState<string>('all');
   const [glPartyFilter, setGlPartyFilter] = useState<string>('all');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
   const [stockItemFilter, setStockItemFilter] = useState<string>('all');
 
   // Print Modal
@@ -170,7 +200,7 @@ export default function App() {
   const [selectedPurchaseForPrint, setSelectedPurchaseForPrint] = useState<PurchaseInvoice | null>(null);
   const [selectedPaymentForPrint, setSelectedPaymentForPrint] = useState<PaymentEntry | null>(null);
   const [showLedgerPrintModal, setShowLedgerPrintModal] = useState<boolean>(false);
-  
+
   const [editingId, setEditingId] = useState<number | null>(null);
 
   // Modals
@@ -216,11 +246,13 @@ export default function App() {
       const glParams = new URLSearchParams();
       if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
       if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
+      if (fromDate) glParams.append('from_date', fromDate);
+      if (toDate) glParams.append('to_date', toDate);
 
       const stockParams = new URLSearchParams();
       if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
 
-      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin] = await Promise.all([
+      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin, resGST, resDash] = await Promise.all([
         fetch(`${API_BASE}/selling/customers/`),
         fetch(`${API_BASE}/buying/suppliers/`),
         fetch(`${API_BASE}/stock/items/`),
@@ -229,7 +261,10 @@ export default function App() {
         fetch(`${API_BASE}/accounts/payments/`),
         fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
         fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
-        fetch(`${API_BASE}/accounts/financial-statements/`)
+        fetch(`${API_BASE}/accounts/financial-statements/`),
+        fetch(`${API_BASE}/accounts/gst-returns/`),
+        fetch(`${API_BASE}/accounts/dashboard-summary/`)
+
       ]);
 
       if (seq !== requestSeq.current) return;
@@ -241,7 +276,7 @@ export default function App() {
         catch { failed.push(label); return null; }
       };
 
-      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin] = await Promise.all([
+      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin, gst, dash] = await Promise.all([
         read<Customer[]>('Customers', resCust),
         read<Supplier[]>('Suppliers', resSupp),
         read<Item[]>('Items', resItems),
@@ -251,6 +286,8 @@ export default function App() {
         read<GLEntryRow[]>('General ledger', resGL),
         read<StockLedgerRow[]>('Stock ledger', resStock),
         read<FinancialStatements>('Financial statements', resFin),
+        read<any[]>('GST returns', resGST),
+        read<DashboardSummary>('Dashboard summary', resDash)
       ]);
 
       if (cust) setCustomers(cust);
@@ -262,6 +299,8 @@ export default function App() {
       if (gl) setGlEntries(gl);
       if (stock) setStockLedger(stock);
       if (fin) setFinance(fin);
+      if (gst) setGstData(gst);
+      if (dash) setDashboardSummary(dash);
 
       if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
     } catch (err) {
@@ -271,11 +310,53 @@ export default function App() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [glAccountFilter, glPartyFilter, stockItemFilter]);
+  }, [glAccountFilter, glPartyFilter, fromDate, toDate, stockItemFilter]);
+
+  const loadDashboardSummary = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/accounts/dashboard-summary/`);
+      if (!res.ok) throw new Error('Failed to load dashboard summary');
+      const data = await res.json();
+      setDashboardSummary(data);
+    } catch (err) {
+      console.error("API error:", err);
+    }
+  };
 
   useEffect(() => {
     void loadData();
+    void loadDashboardSummary();
   }, [activeTab, loadData]);
+
+  const exportToCSV = (data: Record<string, any>[], filename: string) => {
+    if (!data || data.length === 0) {
+      alert('એક્સપોર્ટ કરવા માટે કોઈ ડેટા ઉપલબ્ધ નથી.');
+      return;
+    }
+
+    // ઓબ્જેક્ટ કીઝમાંથી હેડર્સ બનાવો
+    const headers = Object.keys(data[0]);
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row =>
+        headers
+          .map(header => {
+            const val = row[header] !== undefined && row[header] !== null ? String(row[header]) : '';
+            return `"${val.replace(/"/g, '""')}"`;
+          })
+          .join(',')
+      )
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Safe Deletion Handlers
   const handleDeleteInvoice = async (id: number, invNo: string) => {
@@ -292,6 +373,15 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete purchase bill');
+      void loadData();
+    } catch (err: unknown) { alert(getErrorMessage(err)); }
+  };
+
+  const handleDeletePayment = async (id: number, voucherNo: string) => {
+    if (!window.confirm(`Are you sure you want to delete Payment Entry #${voucherNo}? This will reverse General Ledger entries.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/accounts/payments/${id}/`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete payment entry');
       void loadData();
     } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
@@ -363,6 +453,17 @@ export default function App() {
     const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id, 10));
     if (!selCust) { alert('Select a customer'); return; }
     if (!validateLines(invoiceForm.lines)) return;
+
+    // Stock Guard check
+    for (const line of invoiceForm.lines) {
+      const selItem = items.find(i => i.id === parseInt(line.item_id, 10));
+      const requestedQty = parseFloat(line.quantity) || 0;
+      const availableStock = selItem ? Number(selItem.current_stock) : 0;
+      if (selItem && requestedQty > availableStock) {
+        alert(`Cannot sell ${requestedQty} of ${selItem.item_name}. Only ${availableStock} in stock.`);
+        return;
+      }
+    }
 
     const lineItems = buildLines(invoiceForm.lines);
     const net = sumLines(invoiceForm.lines);
@@ -479,6 +580,9 @@ export default function App() {
           <button onClick={() => setActiveTab('reports')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'reports' ? '#1e293b' : 'transparent', color: activeTab === 'reports' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <PieChart size={18} /> Profit & Loss / Balance Sheet
           </button>
+          <button onClick={() => setActiveTab('gst')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'gst' ? '#1e293b' : 'transparent', color: activeTab === 'gst' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
+            <PieChart size={18} /> GST Returns (GSTR-1/3B)
+          </button>
         </nav>
       </aside>
 
@@ -513,28 +617,77 @@ export default function App() {
         {activeTab === 'selling' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Sales Invoices</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer sales with GST & automatic inventory deductions</p></div>
-              <button onClick={() => { setEditingId(null); setInvoiceForm(prev => ({ ...prev, invoice_number: getNextInvoiceNumber(invoices), customer_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); setShowInvoiceModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Invoice</button>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Sales Invoices</h1>
+                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer sales with GST & automatic inventory deductions</p>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    const exportData = invoices.map(inv => ({
+                      'Invoice No': inv.invoice_number,
+                      'Customer': inv.customer_name,
+                      'Date': inv.posting_date,
+                      'Net Total (Rs)': inv.net_total,
+                      'Tax (Rs)': inv.tax_amount,
+                      'Grand Total (Rs)': inv.grand_total,
+                      'Status': inv.status || 'Submitted'
+                    }));
+                    exportToCSV(exportData, 'Sales_Invoices');
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  <Download size={16} /> Export Excel
+                </button>
+                <button onClick={() => { setEditingId(null); setInvoiceForm(prev => ({ ...prev, invoice_number: getNextInvoiceNumber(invoices), customer_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); setShowInvoiceModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                  <Plus size={16} /> New Invoice
+                </button>
+              </div>
             </div>
-            <DataTable<SalesInvoice> 
+
+            {/* અહીં ડેશબોર્ડ સમરી કાર્ડ્સ મૂકો */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
+              <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Sales</span>
+                <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#0284c7' }}>Rs. {dashboardSummary.total_sales.toFixed(2)}</h3>
+              </div>
+              <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Purchases</span>
+                <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>Rs. {dashboardSummary.total_purchases.toFixed(2)}</h3>
+              </div>
+              <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Bank Balance</span>
+                <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>Rs. {dashboardSummary.bank_balance.toFixed(2)}</h3>
+              </div>
+            </div>
+
+            {/* ડેશબોર્ડ સમરી કાર્ડ્સ */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
+              {/* તમારા ત્રણેય કાર્ડ્સ અહીં છે */}
+            </div>
+
+            {/* નવો મંથલી વિઝ્યુઅલ એનાલિટિક્સ ગ્રાફ */}
+            <MonthlyAnalyticsChart data={gstData} />
+
+            <DataTable<SalesInvoice>
               columns={[
-                { header: 'Invoice #', accessor: 'invoice_number' }, 
-                { header: 'Customer', accessor: 'customer_name' }, 
-                { header: 'Posting Date', accessor: 'posting_date' }, 
-                { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` }, 
-                { header: 'Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` }, 
+                { header: 'Invoice #', accessor: 'invoice_number' },
+                { header: 'Customer', accessor: 'customer_name' },
+                { header: 'Posting Date', accessor: 'posting_date' },
+                { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
+                { header: 'Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Grand Total (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
-                { 
-                  header: 'Actions', 
+                {
+                  header: 'Actions',
                   accessor: (row) => (
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button 
+                      <button
                         onClick={() => setSelectedInvoiceForPrint(row)}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
                       >
                         <Printer size={12} /> Print
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           setEditingId(row.id || null);
                           setInvoiceForm({
@@ -551,7 +704,7 @@ export default function App() {
                       >
                         <Edit2 size={12} /> Edit
                       </button>
-                      <button 
+                      <button
                         onClick={() => { if (row.id !== undefined) void handleDeleteInvoice(row.id, row.invoice_number); }}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
@@ -560,9 +713,9 @@ export default function App() {
                     </div>
                   )
                 }
-              ]} 
-              data={invoices} 
-              emptyMessage="No sales invoices created yet." 
+              ]}
+              data={invoices}
+              emptyMessage="No sales invoices created yet."
             />
           </div>
         )}
@@ -571,28 +724,60 @@ export default function App() {
         {activeTab === 'buying' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Purchase Bills (Buying)</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Inward supplier bills, input GST credits & inventory replenishment</p></div>
-              <button onClick={() => { setEditingId(null); setPurchaseForm(prev => ({ ...prev, bill_number: getNextPurchaseNumber(purchases), supplier_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); setShowPurchaseModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Purchase Bill</button>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Purchase Bills (Buying)</h1>
+                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Inward supplier bills, input GST credits & inventory replenishment</p>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    const exportData = purchases.map(pur => ({
+                      'Bill No': pur.bill_number,
+                      'Supplier': pur.supplier_name,
+                      'Date': pur.posting_date,
+                      'Net Total (Rs)': pur.net_total,
+                      'Input Tax (Rs)': pur.tax_amount,
+                      'Total Payable (Rs)': pur.grand_total,
+                      'Status': pur.status || 'Submitted'
+                    }));
+                    exportToCSV(exportData, 'Purchase_Bills');
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  <Download size={16} /> Export Excel
+                </button>
+                <button 
+                  onClick={() => { 
+                    setEditingId(null); 
+                    setPurchaseForm(prev => ({ ...prev, bill_number: getNextPurchaseNumber(purchases), supplier_id: '', tax_rate: '18', status: 'Submitted', lines: [newLine()] })); 
+                    setShowPurchaseModal(true); 
+                  }} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  <Plus size={16} /> New Purchase Bill
+                </button>
+              </div>
             </div>
-            <DataTable<PurchaseInvoice> 
+
+            <DataTable<PurchaseInvoice>
               columns={[
-                { header: 'Bill #', accessor: 'bill_number' }, 
-                { header: 'Supplier', accessor: 'supplier_name' }, 
-                { header: 'Posting Date', accessor: 'posting_date' }, 
-                { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` }, 
-                { header: 'Input Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` }, 
+                { header: 'Bill #', accessor: 'bill_number' },
+                { header: 'Supplier', accessor: 'supplier_name' },
+                { header: 'Posting Date', accessor: 'posting_date' },
+                { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
+                { header: 'Input Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Total Payable (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
                 {
                   header: 'Actions',
                   accessor: (row) => (
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button 
+                      <button
                         onClick={() => setSelectedPurchaseForPrint(row)}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
                       >
                         <Printer size={12} /> Print
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           setEditingId(row.id || null);
                           setPurchaseForm({
@@ -609,7 +794,7 @@ export default function App() {
                       >
                         <Edit2 size={12} /> Edit
                       </button>
-                      <button 
+                      <button
                         onClick={() => { if (row.id !== undefined) void handleDeletePurchase(row.id, row.bill_number); }}
                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
                       >
@@ -618,9 +803,9 @@ export default function App() {
                     </div>
                   )
                 }
-              ]} 
-              data={purchases} 
-              emptyMessage="No purchase bills recorded yet." 
+              ]}
+              data={purchases}
+              emptyMessage="No purchase bills recorded yet."
             />
           </div>
         )}
@@ -632,16 +817,16 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Customers</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer registry & party master</p></div>
               <button onClick={() => { setEditingId(null); setCustomerForm({ customer_name: '', customer_type: 'Company', gst_category: 'Unregistered', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowCustomerModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Customer</button>
             </div>
-            <DataTable<Customer> 
+            <DataTable<Customer>
               columns={[
-                { header: 'Customer Name', accessor: 'customer_name' }, 
-                { header: 'Type', accessor: 'customer_type' }, 
-                { header: 'GSTIN', accessor: r => r.gstin || '-' }, 
+                { header: 'Customer Name', accessor: 'customer_name' },
+                { header: 'Type', accessor: 'customer_type' },
+                { header: 'GSTIN', accessor: r => r.gstin || '-' },
                 { header: 'City', accessor: r => r.city || '-' },
                 {
                   header: 'Action',
                   accessor: (row) => (
-                    <button 
+                    <button
                       onClick={() => {
                         setEditingId(row.id || null);
                         setCustomerForm({ ...row });
@@ -653,9 +838,9 @@ export default function App() {
                     </button>
                   )
                 }
-              ]} 
-              data={customers} 
-              emptyMessage="No customers yet." 
+              ]}
+              data={customers}
+              emptyMessage="No customers yet."
             />
           </div>
         )}
@@ -667,16 +852,16 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Suppliers (Vendors)</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Supplier registry with GSTIN & accounts tracking</p></div>
               <button onClick={() => { setEditingId(null); setSupplierForm({ supplier_name: '', supplier_type: 'Company', gst_category: 'Registered Regular', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowSupplierModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Supplier</button>
             </div>
-            <DataTable<Supplier> 
+            <DataTable<Supplier>
               columns={[
-                { header: 'Supplier Name', accessor: 'supplier_name' }, 
-                { header: 'GSTIN', accessor: r => r.gstin || '-' }, 
-                { header: 'GST Category', accessor: 'gst_category' }, 
+                { header: 'Supplier Name', accessor: 'supplier_name' },
+                { header: 'GSTIN', accessor: r => r.gstin || '-' },
+                { header: 'GST Category', accessor: 'gst_category' },
                 { header: 'City', accessor: r => r.city || '-' },
                 {
                   header: 'Action',
                   accessor: (row) => (
-                    <button 
+                    <button
                       onClick={() => {
                         setEditingId(row.id || null);
                         setSupplierForm({ ...row });
@@ -688,9 +873,9 @@ export default function App() {
                     </button>
                   )
                 }
-              ]} 
-              data={suppliers} 
-              emptyMessage="No suppliers registered yet." 
+              ]}
+              data={suppliers}
+              emptyMessage="No suppliers registered yet."
             />
           </div>
         )}
@@ -702,29 +887,37 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Payment Entries</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer receipts & supplier vendor payments</p></div>
               <button onClick={() => { setPaymentForm(prev => ({ ...prev, voucher_no: getNextPaymentNumber(payments), payment_type: 'Receive', party_type: 'Customer', party_name: '', paid_amount: '0', reference_no: '', remarks: '' })); setShowPaymentModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> Make / Receive Payment</button>
             </div>
-            <DataTable<PaymentEntry> 
+            <DataTable<PaymentEntry>
               columns={[
-                { header: 'Voucher #', accessor: 'voucher_no' }, 
-                { header: 'Date', accessor: 'posting_date' }, 
-                { header: 'Type', accessor: 'payment_type' }, 
-                { header: 'Party', accessor: 'party_name' }, 
-                { header: 'Mode', accessor: 'mode_of_payment' }, 
+                { header: 'Voucher #', accessor: 'voucher_no' },
+                { header: 'Date', accessor: 'posting_date' },
+                { header: 'Type', accessor: 'payment_type' },
+                { header: 'Party', accessor: 'party_name' },
+                { header: 'Mode', accessor: 'mode_of_payment' },
                 { header: 'Amount (Rs.)', accessor: r => <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>Rs. {r.paid_amount}</strong> },
                 {
                   header: 'Action',
                   accessor: (row) => (
-                    <button 
-                      onClick={() => setSelectedPaymentForPrint(row)}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
-                    >
-                      <Printer size={12} /> Print
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={() => setSelectedPaymentForPrint(row)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
+                      >
+                        <Printer size={12} /> Print
+                      </button>
+                      <button
+                        onClick={() => { if (row.id !== undefined) void handleDeletePayment(row.id, row.voucher_no); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
+                      >
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    </div>
                   )
                 }
-              ]} 
-              data={payments} 
-              emptyMessage="No payment entries yet." 
-            />  
+              ]}
+              data={payments}
+              emptyMessage="No payment entries yet."
+            />
           </div>
         )}
 
@@ -735,17 +928,17 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Current warehouse inventory balance</p></div>
               <button onClick={() => { setEditingId(null); setItemForm({ item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0' }); setShowItemModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Item</button>
             </div>
-            <DataTable<Item> 
+            <DataTable<Item>
               columns={[
-                { header: 'Code', accessor: 'item_code' }, 
-                { header: 'Item Name', accessor: 'item_name' }, 
-                { header: 'Category', accessor: 'category' }, 
-                { header: 'Rate (Rs.)', accessor: r => `Rs. ${r.standard_rate}` }, 
+                { header: 'Code', accessor: 'item_code' },
+                { header: 'Item Name', accessor: 'item_name' },
+                { header: 'Category', accessor: 'category' },
+                { header: 'Rate (Rs.)', accessor: r => `Rs. ${r.standard_rate}` },
                 { header: 'Current Stock', accessor: r => <strong>{r.current_stock} {r.unit}</strong> },
                 {
                   header: 'Action',
                   accessor: (row) => (
-                    <button 
+                    <button
                       onClick={() => {
                         setEditingId(row.id || null);
                         setItemForm({
@@ -764,9 +957,9 @@ export default function App() {
                     </button>
                   )
                 }
-              ]} 
-              data={items} 
-              emptyMessage="No items registered in stock." 
+              ]}
+              data={items}
+              emptyMessage="No items registered in stock."
             />
           </div>
         )}
@@ -779,7 +972,7 @@ export default function App() {
                 <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Movement & Valuation Ledger</h1>
                 <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Chronological register of inward receipts, outward issues & item balances</p>
               </div>
-              <button 
+              <button
                 onClick={() => setStockItemFilter('all')}
                 style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
               >
@@ -792,8 +985,8 @@ export default function App() {
                 <Filter size={16} /> Filter by Item:
               </div>
               <div style={{ flex: 1, maxWidth: '400px' }}>
-                <select 
-                  value={stockItemFilter} 
+                <select
+                  value={stockItemFilter}
                   onChange={e => setStockItemFilter(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
                 >
@@ -805,7 +998,7 @@ export default function App() {
               </div>
             </div>
 
-            <DataTable<StockLedgerRow> 
+            <DataTable<StockLedgerRow>
               columns={[
                 { header: 'Date', accessor: 'posting_date' },
                 { header: 'Item Name', accessor: r => <strong>{r.item_name} ({r.item_code})</strong> },
@@ -831,14 +1024,14 @@ export default function App() {
                 <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Unified double-entry bookkeeping ledger & individual party statements</p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button 
+                <button
                   onClick={() => setShowLedgerPrintModal(true)}
                   style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
                 >
                   <Printer size={14} /> Print Statement
                 </button>
-                <button 
-                  onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); }}
+                <button
+                  onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); setFromDate(''); setToDate(''); }}
                   style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
                 >
                   <RefreshCw size={14} /> Reset Filters
@@ -846,15 +1039,15 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
                 <Filter size={16} /> Filters:
               </div>
 
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Account</label>
-                <select 
-                  value={glAccountFilter} 
+                <select
+                  value={glAccountFilter}
                   onChange={e => setGlAccountFilter(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
                 >
@@ -869,10 +1062,10 @@ export default function App() {
                 </select>
               </div>
 
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Party (Customer / Supplier)</label>
-                <select 
-                  value={glPartyFilter} 
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Party</label>
+                <select
+                  value={glPartyFilter}
                   onChange={e => setGlPartyFilter(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
                 >
@@ -881,6 +1074,16 @@ export default function App() {
                     <option key={idx} value={p} style={{ color: '#0f172a' }}>{p}</option>
                   ))}
                 </select>
+              </div>
+
+              <div style={{ width: '140px' }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>From Date</label>
+                <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
+              </div>
+
+              <div style={{ width: '140px' }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>To Date</label>
+                <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
               </div>
             </div>
 
@@ -901,18 +1104,64 @@ export default function App() {
               </div>
             </div>
 
-            <DataTable<GLEntryRow> 
+            <button
+              onClick={() => {
+                const exportData = glEntries.map(entry => ({
+                  'Date': entry.posting_date,
+                  'Voucher Type': entry.voucher_type,
+                  'Voucher No': entry.voucher_no,
+                  'Account': entry.account,
+                  'Party': entry.party || '-',
+                  'Debit (Rs)': entry.debit,
+                  'Credit (Rs)': entry.credit,
+                  'Balance (Rs)': entry.balance
+                }));
+                exportToCSV(exportData, 'General_Ledger');
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+            >
+              <Download size={14} /> Export CSV
+            </button>
+
+            <DataTable<GLEntryRow>
               columns={[
-                { header: 'Date', accessor: 'posting_date' }, 
-                { header: 'Voucher', accessor: r => <strong>{r.voucher_type} #{r.voucher_no}</strong> }, 
-                { header: 'Account', accessor: 'account' }, 
-                { header: 'Party', accessor: r => r.party || '-' }, 
-                { header: 'Debit (Rs.)', accessor: r => Number(r.debit) > 0 ? <span style={{ color: '#0369a1', fontWeight: '600' }}>Rs. {Number(r.debit).toFixed(2)}</span> : '-' }, 
-                { header: 'Credit (Rs.)', accessor: r => Number(r.credit) > 0 ? <span style={{ color: '#15803d', fontWeight: '600' }}>Rs. {Number(r.credit).toFixed(2)}</span> : '-' }, 
+                { header: 'Date', accessor: 'posting_date' },
+                { header: 'Voucher', accessor: r => <strong>{r.voucher_type} #{r.voucher_no}</strong> },
+                { header: 'Account', accessor: 'account' },
+                { header: 'Party', accessor: r => r.party || '-' },
+                { header: 'Debit (Rs.)', accessor: r => Number(r.debit) > 0 ? <span style={{ color: '#0369a1', fontWeight: '600' }}>Rs. {Number(r.debit).toFixed(2)}</span> : '-' },
+                { header: 'Credit (Rs.)', accessor: r => Number(r.credit) > 0 ? <span style={{ color: '#15803d', fontWeight: '600' }}>Rs. {Number(r.credit).toFixed(2)}</span> : '-' },
                 { header: 'Running Bal (Rs.)', accessor: r => <strong>Rs. {Number(r.balance).toFixed(2)}</strong> }
-              ]} 
-              data={glEntries} 
-              emptyMessage="No ledger entries match the selected filters." 
+              ]}
+              data={glEntries}
+              emptyMessage="No ledger entries match the selected filters."
+            />
+          </div>
+        )}
+
+        {activeTab === 'gst' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>GST Return Summary</h1>
+                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Monthly breakdown of Output GST, Input Tax Credit (ITC) and Net Liability</p>
+              </div>
+              <button onClick={() => setShowGstModal(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                <Printer size={16} /> Print GST Report
+              </button>
+            </div>
+
+            <DataTable
+              columns={[
+                { header: 'Month', accessor: 'month' },
+                { header: 'Taxable Sales (Rs.)', accessor: r => `Rs. ${r.sales_net.toFixed(2)}` },
+                { header: 'Output GST (Liability)', accessor: r => <strong style={{ color: '#0369a1' }}>Rs. {r.output_tax.toFixed(2)}</strong> },
+                { header: 'Taxable Purchases (Rs.)', accessor: r => `Rs. ${r.purchase_net.toFixed(2)}` },
+                { header: 'Input ITC (Credit)', accessor: r => <strong style={{ color: '#15803d' }}>Rs. {r.input_itc.toFixed(2)}</strong> },
+                { header: 'Net Tax Status', accessor: r => <strong style={{ color: r.net_gst_payable > 0 ? '#b91c1c' : '#0284c7' }}>{r.net_gst_payable > 0 ? `Payable: Rs. ${r.net_gst_payable.toFixed(2)}` : `ITC Credit: Rs. ${r.itc_carry_forward.toFixed(2)}`}</strong> }
+              ]}
+              data={gstData}
+              emptyMessage="No GST transactions found for returns."
             />
           </div>
         )}
@@ -925,7 +1174,7 @@ export default function App() {
                 <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Financial Statements</h1>
                 <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time Profit & Loss and Balance Sheet derived from General Ledger</p>
               </div>
-              <button 
+              <button
                 onClick={() => setShowFinancePrintModal(true)}
                 style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
               >
@@ -1220,21 +1469,21 @@ export default function App() {
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Reference / UTR / Cheque No</label>
-                <input 
-                  placeholder="e.g. UPI-123456789 or CHQ-00123" 
-                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} 
-                  value={paymentForm.reference_no || ''} 
-                  onChange={e => setPaymentForm({ ...paymentForm, reference_no: e.target.value })} 
+                <input
+                  placeholder="e.g. UPI-123456789 or CHQ-00123"
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  value={paymentForm.reference_no || ''}
+                  onChange={e => setPaymentForm({ ...paymentForm, reference_no: e.target.value })}
                 />
               </div>
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Remarks / Narration</label>
-                <input 
-                  placeholder="e.g. Paid against Invoice INV-0002" 
-                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} 
-                  value={paymentForm.remarks || ''} 
-                  onChange={e => setPaymentForm({ ...paymentForm, remarks: e.target.value })} 
+                <input
+                  placeholder="e.g. Paid against Invoice INV-0002"
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  value={paymentForm.remarks || ''}
+                  onChange={e => setPaymentForm({ ...paymentForm, remarks: e.target.value })}
                 />
               </div>
 
@@ -1245,6 +1494,9 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+      {showGstModal && (
+        <GSTPrintModal data={gstData} onClose={() => setShowGstModal(false)} />
       )}
     </div>
   );
