@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties, type FC, 
 import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
-import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers, Download } from 'lucide-react';
+import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers, Download, Search } from 'lucide-react';
 import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
 import { PaymentPrintModal } from './components/PaymentPrintModal';
 import { LedgerPrintModal } from './components/LedgerPrintModal';
@@ -267,6 +267,7 @@ const getPurchasePaymentStatusMap = (
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports' | 'gst'>('selling');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Data states
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -451,6 +452,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    setSearchQuery('');
     void loadData();
     void loadDashboardSummary();
   }, [activeTab, loadData]);
@@ -679,6 +681,21 @@ export default function App() {
   const salesStatusMap = getSalesPaymentStatusMap(invoices, payments);
   const purchaseStatusMap = getPurchasePaymentStatusMap(purchases, payments);
   void purchaseStatusMap;
+  const filteredInvoices = invoices.filter(inv =>
+    inv.invoice_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    inv.customer_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredPurchases = purchases.filter(pur =>
+    pur.bill_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    pur.supplier_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredItems = items.filter(it =>
+    it.item_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    it.item_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    it.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', background: '#f8fafc', color: '#0f172a' }}>
@@ -850,6 +867,25 @@ export default function App() {
             {/* નવો મંથલી વિઝ્યુઅલ એનાલિટિક્સ ગ્રાફ */}
             <MonthlyAnalyticsChart data={gstData} />
 
+            {/* Live Search Input Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ position: 'relative', width: '320px' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <input
+                  type="text"
+                  placeholder="Search invoice # or customer..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px 8px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                />
+              </div>
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b' }}>
+                  Clear Search
+                </button>
+              )}
+            </div>
+
             <DataTable<SalesInvoice>
               columns={[
                 { header: 'Invoice #', accessor: 'invoice_number' },
@@ -941,7 +977,7 @@ export default function App() {
                   )
                 }
               ]}
-              data={invoices}
+              data={filteredInvoices}
               emptyMessage="No sales invoices created yet."
             />
           </div>
@@ -1028,6 +1064,25 @@ export default function App() {
                 </div>
               );
             })()}
+
+            {/* Live Search Input Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ position: 'relative', width: '320px' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <input
+                  type="text"
+                  placeholder="Search bill # or supplier..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px 8px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                />
+              </div>
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b' }}>
+                  Clear Search
+                </button>
+              )}
+            </div>
 
             <DataTable<PurchaseInvoice>
               columns={[
@@ -1120,7 +1175,7 @@ export default function App() {
                   )
                 }
               ]}
-              data={purchases}
+              data={filteredPurchases}
               emptyMessage="No purchase bills recorded yet."
             />
           </div>
@@ -1334,6 +1389,25 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Live Search Input Bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div style={{ position: 'relative', width: '320px' }}>
+                  <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                  <input
+                    type="text"
+                    placeholder="Search item code, name, or category..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px 8px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                  />
+                </div>
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b' }}>
+                    Clear Search
+                  </button>
+                )}
+              </div>
+
               <DataTable<Item>
                 columns={[
                   { header: 'Code', accessor: 'item_code' },
@@ -1384,7 +1458,7 @@ export default function App() {
                     )
                   }
                 ]}
-                data={items}
+                data={filteredItems}
                 emptyMessage="No items registered in stock."
               />
             </div>
