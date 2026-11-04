@@ -161,6 +161,34 @@ const LineItemsEditor: FC<{
   );
 };
 
+// Due Date & Overdue Calculation Helper
+const getDueStatus = (postingDate: string, dueDate?: string | null) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let targetDate: Date;
+  if (dueDate) {
+    targetDate = new Date(dueDate);
+  } else {
+    // Jo due_date na set hoy to default 15 days credit period ganashe
+    targetDate = new Date(postingDate);
+    targetDate.setDate(targetDate.getDate() + 15);
+  }
+  targetDate.setHours(0, 0, 0, 0);
+
+  const diffTime = today.getTime() - targetDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const formattedDueDate = targetDate.toISOString().split('T')[0];
+
+  if (diffDays > 0) {
+    return { isOverdue: true, days: diffDays, text: `Overdue by ${diffDays}d`, dueDate: formattedDueDate };
+  } else if (diffDays === 0) {
+    return { isOverdue: false, days: 0, text: 'Due today', dueDate: formattedDueDate };
+  } else {
+    return { isOverdue: false, days: Math.abs(diffDays), text: `Due in ${Math.abs(diffDays)}d`, dueDate: formattedDueDate };
+  }
+};
+
 // Sales Invoices Dynamic Payment Status Helper (FIFO allocation)
 const getSalesPaymentStatusMap = (
   invoices: SalesInvoice[],
@@ -312,8 +340,13 @@ export default function App() {
   });
 
   const [invoiceForm, setInvoiceForm] = useState(() => ({
-    invoice_number: 'INV-0001', customer_id: '', posting_date: new Date().toISOString().split('T')[0],
-    tax_rate: '18', status: 'Submitted', lines: [newLine()]
+    invoice_number: 'INV-0001', 
+    customer_id: '', 
+    posting_date: new Date().toISOString().split('T')[0],
+    due_date: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0], // 15 days credit
+    tax_rate: '18', 
+    status: 'Submitted', 
+    lines: [newLine()]
   }));
 
   const [purchaseForm, setPurchaseForm] = useState(() => ({
@@ -564,7 +597,7 @@ export default function App() {
         method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           invoice_number: invoiceForm.invoice_number, customer: selCust.id, customer_name: selCust.customer_name,
-          posting_date: invoiceForm.posting_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
+          posting_date: invoiceForm.posting_date, due_date: invoiceForm.due_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
           status: invoiceForm.status, items: lineItems
         })
       });
@@ -759,6 +792,49 @@ export default function App() {
               {/* તમારા ત્રણેય કાર્ડ્સ અહીં છે */}
             </div>
 
+            {/* Payment Overdue Reminder Banner */}
+            {(() => {
+              const overdueInvoices = invoices.filter(inv => {
+                const statusInfo = salesStatusMap[inv.id || 0];
+                if (statusInfo?.status === 'Paid') return false;
+                const dueInfo = getDueStatus(inv.posting_date, (inv as any).due_date);
+                return dueInfo.isOverdue;
+              });
+
+              const totalOverdueAmount = overdueInvoices.reduce((sum, inv) => {
+                const balance = salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total));
+                return sum + balance;
+              }, 0);
+
+              if (overdueInvoices.length === 0) return null;
+
+              return (
+                <div style={{
+                  background: '#fff5f5',
+                  border: '1px solid #fecaca',
+                  borderRadius: '10px',
+                  padding: '14px 20px',
+                  marginBottom: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '22px' }}>⚠️</span>
+                    <div>
+                      <strong style={{ color: '#991b1b', fontSize: '14px' }}>
+                        Payment Reminder: {overdueInvoices.length} {overdueInvoices.length === 1 ? 'Invoice is' : 'Invoices are'} Overdue!
+                      </strong>
+                      <p style={{ margin: '2px 0 0 0', color: '#7f1d1d', fontSize: '12px' }}>
+                        Total overdue receivables: <strong>Rs. {totalOverdueAmount.toFixed(2)}</strong> (Parties: {overdueInvoices.map(i => i.customer_name).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* નવો મંથલી વિઝ્યુઅલ એનાલિટિક્સ ગ્રાફ */}
             <MonthlyAnalyticsChart data={gstData} />
 
@@ -767,6 +843,31 @@ export default function App() {
                 { header: 'Invoice #', accessor: 'invoice_number' },
                 { header: 'Customer', accessor: 'customer_name' },
                 { header: 'Posting Date', accessor: 'posting_date' },
+                {
+                  header: 'Due Date',
+                  accessor: (row) => {
+                    const dueInfo = getDueStatus(row.posting_date, (row as any).due_date);
+                    const paymentInfo = salesStatusMap[row.id || 0];
+                    const isPaid = paymentInfo?.status === 'Paid';
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontWeight: '500' }}>{dueInfo.dueDate}</span>
+                        {!isPaid && (
+                          dueInfo.isOverdue ? (
+                            <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', width: 'fit-content' }}>
+                              ⚠️ {dueInfo.text}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '11px', color: '#64748b' }}>
+                              {dueInfo.text}
+                            </span>
+                          )
+                        )}
+                      </div>
+                    );
+                  }
+                },
                 { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
                 { header: 'Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Grand Total (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
@@ -807,6 +908,7 @@ export default function App() {
                             invoice_number: row.invoice_number,
                             customer_id: row.customer ? row.customer.toString() : '',
                             posting_date: row.posting_date,
+                            due_date: (row as any).due_date || row.posting_date,
                             tax_rate: inferTaxRate(row.net_total, row.tax_amount),
                             status: row.status || 'Submitted',
                             lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
@@ -1635,6 +1737,7 @@ export default function App() {
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={fieldStyle} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={invoiceForm.due_date} onChange={e => setInvoiceForm({ ...invoiceForm, due_date: e.target.value })} /></div>
                 <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={invoiceForm.tax_rate} onChange={e => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
               </div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={fieldStyle} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
