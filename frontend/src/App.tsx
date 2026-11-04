@@ -9,9 +9,14 @@ import { GSTPrintModal } from './components/GSTPrintModal';
 import { LineItemsEditor } from './components/LineItemsEditor';
 import { SellingTab } from './components/tabs/SellingTab';
 import { BuyingTab } from './components/tabs/BuyingTab';
+import { StockTab } from './components/tabs/StockTab';
+import { PaymentsTab } from './components/tabs/PaymentsTab';
+import { CustomersTab } from './components/tabs/CustomersTab';
+import { SuppliersTab } from './components/tabs/SuppliersTab';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
-import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart, Plus, X, Edit2, Printer, Filter, RefreshCw, Trash2, Layers, Download, Search } from 'lucide-react';
-import { API_BASE, GST_SLABS, getErrorMessage, getNextPaymentNumber, newLine } from './utils/erpHelpers';
+import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart } from 'lucide-react';
+import { X, Printer, Filter, RefreshCw, Layers, Download } from 'lucide-react';
+import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
 import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, exportToCSV, type DashboardSummary, type LineForm } from './utils/erpHelpers';
 
 export default function App() {
@@ -522,287 +527,49 @@ export default function App() {
 
         {/* TAB 3: CUSTOMERS */}
         {activeTab === 'customers' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Customers</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer registry & party master</p></div>
-              <button onClick={() => { setEditingId(null); setCustomerForm({ customer_name: '', customer_type: 'Company', gst_category: 'Unregistered', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowCustomerModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Customer</button>
-            </div>
-
-            {/* Total Receivables Summary Card */}
-            <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Receivables (Debtors)</span>
-              <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0369a1' }}>
-                Rs. {partyOutstanding.total_receivable.toFixed(2)}
-              </h3>
-            </div>
-
-            <DataTable<Customer>
-              columns={[
-                { header: 'Customer Name', accessor: 'customer_name' },
-                { header: 'Type', accessor: 'customer_type' },
-                { header: 'GSTIN', accessor: r => r.gstin || '-' },
-                { header: 'City', accessor: r => r.city || '-' },
-                {
-                  header: 'Outstanding Balance',
-                  accessor: (row) => {
-                    const bal = partyOutstanding.customers[row.customer_name] || 0;
-                    return (
-                      <strong style={{ color: bal > 0 ? '#b91c1c' : '#15803d' }}>
-                        Rs. {bal.toFixed(2)} {bal > 0 ? 'Dr' : ''}
-                      </strong>
-                    );
-                  }
-                },
-                {
-                  header: 'Action',
-                  accessor: (row) => (
-                    <button
-                      onClick={() => {
-                        setEditingId(row.id || null);
-                        setCustomerForm({ ...row });
-                        setShowCustomerModal(true);
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
-                  )
-                }
-              ]}
-              data={customers}
-              emptyMessage="No customers yet."
-            />
-          </div>
+          <CustomersTab
+            customers={customers}
+            partyOutstanding={partyOutstanding}
+            setEditingId={setEditingId}
+            setCustomerForm={setCustomerForm}
+            setShowCustomerModal={setShowCustomerModal}
+          />
         )}
 
         {/* TAB 4: SUPPLIERS */}
         {activeTab === 'suppliers' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Suppliers (Vendors)</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Supplier registry with GSTIN & accounts tracking</p></div>
-              <button onClick={() => { setEditingId(null); setSupplierForm({ supplier_name: '', supplier_type: 'Company', gst_category: 'Registered Regular', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowSupplierModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Supplier</button>
-            </div>
-
-            {/* Total Payables Summary Card */}
-            <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Payables (Creditors)</span>
-              <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
-                Rs. {partyOutstanding.total_payable.toFixed(2)}
-              </h3>
-            </div>
-
-            <DataTable<Supplier>
-              columns={[
-                { header: 'Supplier Name', accessor: 'supplier_name' },
-                { header: 'GSTIN', accessor: r => r.gstin || '-' },
-                { header: 'GST Category', accessor: 'gst_category' },
-                { header: 'City', accessor: r => r.city || '-' },
-                {
-                  header: 'Outstanding Payable',
-                  accessor: (row) => {
-                    const bal = partyOutstanding.suppliers[row.supplier_name] || 0;
-                    return (
-                      <strong style={{ color: bal > 0 ? '#dc2626' : '#15803d' }}>
-                        Rs. {bal.toFixed(2)} {bal > 0 ? 'Cr' : ''}
-                      </strong>
-                    );
-                  }
-                },
-                {
-                  header: 'Action',
-                  accessor: (row) => (
-                    <button
-                      onClick={() => {
-                        setEditingId(row.id || null);
-                        setSupplierForm({ ...row });
-                        setShowSupplierModal(true);
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
-                  )
-                }
-              ]}
-              data={suppliers}
-              emptyMessage="No suppliers registered yet."
-            />
-          </div>
+          <SuppliersTab
+            suppliers={suppliers}
+            partyOutstanding={partyOutstanding}
+            setEditingId={setEditingId}
+            setSupplierForm={setSupplierForm}
+            setShowSupplierModal={setShowSupplierModal}
+          />
         )}
 
         {/* TAB 5: PAYMENTS */}
         {activeTab === 'payments' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Payment Entries</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer receipts & supplier vendor payments</p></div>
-              <button onClick={() => { setPaymentForm(prev => ({ ...prev, voucher_no: getNextPaymentNumber(payments), payment_type: 'Receive', party_type: 'Customer', party_name: '', paid_amount: '0', reference_no: '', remarks: '' })); setShowPaymentModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> Make / Receive Payment</button>
-            </div>
-            <DataTable<PaymentEntry>
-              columns={[
-                { header: 'Voucher #', accessor: 'voucher_no' },
-                { header: 'Date', accessor: 'posting_date' },
-                { header: 'Type', accessor: 'payment_type' },
-                { header: 'Party', accessor: 'party_name' },
-                { header: 'Mode', accessor: 'mode_of_payment' },
-                { header: 'Amount (Rs.)', accessor: r => <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>Rs. {r.paid_amount}</strong> },
-                {
-                  header: 'Action',
-                  accessor: (row) => (
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button
-                        onClick={() => setSelectedPaymentForPrint(row)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
-                      >
-                        <Printer size={12} /> Print
-                      </button>
-                      <button
-                        onClick={() => { if (row.id !== undefined) void handleDeletePayment(row.id, row.voucher_no); }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
-                      >
-                        <Trash2 size={12} /> Delete
-                      </button>
-                    </div>
-                  )
-                }
-              ]}
-              data={payments}
-              emptyMessage="No payment entries yet."
-            />
-          </div>
+          <PaymentsTab
+            payments={payments}
+            setPaymentForm={setPaymentForm}
+            setShowPaymentModal={setShowPaymentModal}
+            setSelectedPaymentForPrint={setSelectedPaymentForPrint}
+            handleDeletePayment={handleDeletePayment}
+          />
         )}
 
         {/* TAB 6: STOCK */}
-        {activeTab === 'stock' && (() => {
-          // ઇન્વેન્ટરી સમરી ગણતરી
-          const totalItemsCount = items.length;
-          const totalValuation = items.reduce((sum, it) => sum + ((parseFloat(String(it.current_stock)) || 0) * (parseFloat(String(it.standard_rate)) || 0)), 0);
-          const lowStockCount = items.filter(it => (parseFloat(String(it.current_stock)) || 0) <= 10).length;
-
-          return (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <div>
-                  <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items & Inventory</h1>
-                  <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time warehouse stock balance, valuation and reorder health</p>
-                </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button
-                    onClick={() => {
-                      const exportData = items.map(it => ({
-                        'Item Code': it.item_code,
-                        'Item Name': it.item_name,
-                        'Category': it.category,
-                        'Unit': it.unit,
-                        'Rate (Rs)': it.standard_rate,
-                        'Current Stock': it.current_stock,
-                        'Stock Value (Rs)': ((parseFloat(String(it.current_stock)) || 0) * (parseFloat(String(it.standard_rate)) || 0)).toFixed(2),
-                        'Status': (parseFloat(String(it.current_stock)) || 0) <= 0 ? 'Out of Stock' : (parseFloat(String(it.current_stock)) || 0) <= 10 ? 'Low Stock' : 'In Stock'
-                      }));
-                      exportToCSV(exportData, 'Stock_Inventory_Report');
-                    }}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-                  >
-                    <Download size={16} /> Export Stock
-                  </button>
-                  <button onClick={() => { setEditingId(null); setItemForm({ item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0' }); setShowItemModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                    <Plus size={16} /> New Item
-                  </button>
-                </div>
-              </div>
-
-              {/* Inventory Summary & Low Stock Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
-                <div style={{ background: '#fff', padding: '18px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total SKUs / Items</span>
-                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0f172a' }}>{totalItemsCount} Products</h3>
-                </div>
-                <div style={{ background: '#fff', padding: '18px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Inventory Valuation</span>
-                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0284c7' }}>Rs. {totalValuation.toFixed(2)}</h3>
-                </div>
-                <div style={{ padding: '18px 20px', borderRadius: '10px', border: lowStockCount > 0 ? '1px solid #fecaca' : '1px solid #e2e8f0', background: lowStockCount > 0 ? '#fff5f5' : '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <span style={{ fontSize: '12px', color: lowStockCount > 0 ? '#b91c1c' : '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Low / Out of Stock Alert</span>
-                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: lowStockCount > 0 ? '#dc2626' : '#15803d' }}>
-                    {lowStockCount} Items Need Attention
-                  </h3>
-                </div>
-              </div>
-
-              {/* Live Search Input Bar */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                <div style={{ position: 'relative', width: '320px' }}>
-                  <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                  <input
-                    type="text"
-                    placeholder="Search item code, name, or category..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    style={{ width: '100%', padding: '8px 12px 8px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
-                  />
-                </div>
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b' }}>
-                    Clear Search
-                  </button>
-                )}
-              </div>
-
-              <DataTable<Item>
-                columns={[
-                  { header: 'Code', accessor: 'item_code' },
-                  { header: 'Item Name', accessor: 'item_name' },
-                  { header: 'Category', accessor: 'category' },
-                  { header: 'Rate (Rs.)', accessor: r => `Rs. ${r.standard_rate}` },
-                  { header: 'Current Stock', accessor: r => <strong>{r.current_stock} {r.unit}</strong> },
-                  {
-                    header: 'Stock Value',
-                    accessor: r => (
-                      <span style={{ color: '#0284c7', fontWeight: '600' }}>
-                        Rs. {((parseFloat(String(r.current_stock)) || 0) * (parseFloat(String(r.standard_rate)) || 0)).toFixed(2)}
-                      </span>
-                    )
-                  },
-                  {
-                    header: 'Inventory Health',
-                    accessor: (r) => {
-                      const stock = parseFloat(String(r.current_stock)) || 0;
-                      if (stock <= 0) {
-                        return <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Out of Stock</span>;
-                      } else if (stock <= 10) {
-                        return <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Low Stock ({stock})</span>;
-                      }
-                      return <span style={{ background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>In Stock</span>;
-                    }
-                  },
-                  {
-                    header: 'Action',
-                    accessor: (row) => (
-                      <button
-                        onClick={() => {
-                          setEditingId(row.id || null);
-                          setItemForm({
-                            item_code: row.item_code,
-                            item_name: row.item_name,
-                            category: row.category,
-                            unit: row.unit,
-                            standard_rate: row.standard_rate.toString(),
-                            current_stock: row.current_stock.toString()
-                          });
-                          setShowItemModal(true);
-                        }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
-                      >
-                        <Edit2 size={12} /> Edit
-                      </button>
-                    )
-                  }
-                ]}
-                data={filteredItems}
-                emptyMessage="No items registered in stock."
-              />
-            </div>
-          );
-        })()}
+        {activeTab === 'stock' && (
+          <StockTab
+            items={items}
+            filteredItems={filteredItems}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            setEditingId={setEditingId}
+            setItemForm={setItemForm}
+            setShowItemModal={setShowItemModal}
+          />
+        )}
 
         {/* TAB 7: STOCK MOVEMENT LEDGER */}
         {activeTab === 'stock-ledger' && (
