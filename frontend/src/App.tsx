@@ -161,6 +161,82 @@ const LineItemsEditor: FC<{
   );
 };
 
+// Sales Invoices Dynamic Payment Status Helper (FIFO allocation)
+const getSalesPaymentStatusMap = (
+  invoices: SalesInvoice[],
+  payments: PaymentEntry[]
+) => {
+  const sorted = [...invoices].sort((a, b) => {
+    if (a.posting_date !== b.posting_date) return a.posting_date.localeCompare(b.posting_date);
+    return (a.id || 0) - (b.id || 0);
+  });
+
+  const pool: Record<string, number> = {};
+  for (const p of payments) {
+    if (p.payment_type === 'Receive') {
+      const name = p.party_name;
+      pool[name] = (pool[name] || 0) + (parseFloat(String(p.paid_amount)) || 0);
+    }
+  }
+
+  const map: Record<number, { status: 'Paid' | 'Partially Paid' | 'Unpaid'; paid: number; balance: number }> = {};
+  for (const inv of sorted) {
+    if (!inv.id) continue;
+    const name = inv.customer_name;
+    const total = parseFloat(String(inv.grand_total)) || 0;
+    const avail = pool[name] || 0;
+
+    if (avail >= total && total > 0) {
+      map[inv.id] = { status: 'Paid', paid: total, balance: 0 };
+      pool[name] -= total;
+    } else if (avail > 0) {
+      map[inv.id] = { status: 'Partially Paid', paid: avail, balance: total - avail };
+      pool[name] = 0;
+    } else {
+      map[inv.id] = { status: 'Unpaid', paid: 0, balance: total };
+    }
+  }
+  return map;
+};
+
+// Purchase Bills Dynamic Payment Status Helper (FIFO allocation)
+const getPurchasePaymentStatusMap = (
+  purchases: PurchaseInvoice[],
+  payments: PaymentEntry[]
+) => {
+  const sorted = [...purchases].sort((a, b) => {
+    if (a.posting_date !== b.posting_date) return a.posting_date.localeCompare(b.posting_date);
+    return (a.id || 0) - (b.id || 0);
+  });
+
+  const pool: Record<string, number> = {};
+  for (const p of payments) {
+    if (p.payment_type === 'Pay') {
+      const name = p.party_name;
+      pool[name] = (pool[name] || 0) + (parseFloat(String(p.paid_amount)) || 0);
+    }
+  }
+
+  const map: Record<number, { status: 'Paid' | 'Partially Paid' | 'Unpaid'; paid: number; balance: number }> = {};
+  for (const pur of sorted) {
+    if (!pur.id) continue;
+    const name = pur.supplier_name;
+    const total = parseFloat(String(pur.grand_total)) || 0;
+    const avail = pool[name] || 0;
+
+    if (avail >= total && total > 0) {
+      map[pur.id] = { status: 'Paid', paid: total, balance: 0 };
+      pool[name] -= total;
+    } else if (avail > 0) {
+      map[pur.id] = { status: 'Partially Paid', paid: avail, balance: total - avail };
+      pool[name] = 0;
+    } else {
+      map[pur.id] = { status: 'Unpaid', paid: 0, balance: total };
+    }
+  }
+  return map;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports' | 'gst'>('selling');
 
@@ -178,6 +254,17 @@ export default function App() {
     total_sales: 0,
     total_purchases: 0,
     bank_balance: 0
+  });
+  const [partyOutstanding, setPartyOutstanding] = useState<{
+    customers: Record<string, number>;
+    suppliers: Record<string, number>;
+    total_receivable: number;
+    total_payable: number;
+  }>({
+    customers: {},
+    suppliers: {},
+    total_receivable: 0,
+    total_payable: 0,
   });
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
   const [gstData, setGstData] = useState<any[]>([]);
@@ -252,7 +339,7 @@ export default function App() {
       const stockParams = new URLSearchParams();
       if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
 
-      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin, resGST, resDash] = await Promise.all([
+      const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin, resGST, resDash, resParty] = await Promise.all([
         fetch(`${API_BASE}/selling/customers/`),
         fetch(`${API_BASE}/buying/suppliers/`),
         fetch(`${API_BASE}/stock/items/`),
@@ -263,8 +350,8 @@ export default function App() {
         fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
         fetch(`${API_BASE}/accounts/financial-statements/`),
         fetch(`${API_BASE}/accounts/gst-returns/`),
-        fetch(`${API_BASE}/accounts/dashboard-summary/`)
-
+        fetch(`${API_BASE}/accounts/dashboard-summary/`),
+        fetch(`${API_BASE}/accounts/party-outstanding/`)
       ]);
 
       if (seq !== requestSeq.current) return;
@@ -276,7 +363,7 @@ export default function App() {
         catch { failed.push(label); return null; }
       };
 
-      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin, gst, dash] = await Promise.all([
+      const [cust, supp, itemList, inv, pur, pay, gl, stock, fin, gst, dash, party] = await Promise.all([
         read<Customer[]>('Customers', resCust),
         read<Supplier[]>('Suppliers', resSupp),
         read<Item[]>('Items', resItems),
@@ -287,7 +374,8 @@ export default function App() {
         read<StockLedgerRow[]>('Stock ledger', resStock),
         read<FinancialStatements>('Financial statements', resFin),
         read<any[]>('GST returns', resGST),
-        read<DashboardSummary>('Dashboard summary', resDash)
+        read<DashboardSummary>('Dashboard summary', resDash),
+        read<any>('Party Outstanding', resParty)
       ]);
 
       if (cust) setCustomers(cust);
@@ -301,6 +389,7 @@ export default function App() {
       if (fin) setFinance(fin);
       if (gst) setGstData(gst);
       if (dash) setDashboardSummary(dash);
+      if (party) setPartyOutstanding(party);
 
       if (failed.length > 0) setLoadError(`Could not load: ${failed.join(', ')}.`);
     } catch (err) {
@@ -542,6 +631,9 @@ export default function App() {
   const invoiceTax = (invoiceNet * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
   const purchaseNet = sumLines(purchaseForm.lines);
   const purchaseTax = (purchaseNet * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
+  const salesStatusMap = getSalesPaymentStatusMap(invoices, payments);
+  const purchaseStatusMap = getPurchasePaymentStatusMap(purchases, payments);
+  void purchaseStatusMap;
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', background: '#f8fafc', color: '#0f172a' }}>
@@ -631,7 +723,8 @@ export default function App() {
                       'Net Total (Rs)': inv.net_total,
                       'Tax (Rs)': inv.tax_amount,
                       'Grand Total (Rs)': inv.grand_total,
-                      'Status': inv.status || 'Submitted'
+                      'Payment Status': salesStatusMap[inv.id || 0]?.status || 'Unpaid',
+                      'Balance Due (Rs)': (salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total))).toFixed(2)
                     }));
                     exportToCSV(exportData, 'Sales_Invoices');
                   }}
@@ -677,6 +770,26 @@ export default function App() {
                 { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
                 { header: 'Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Grand Total (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
+                {
+                  header: 'Payment Status',
+                  accessor: (row) => {
+                    const info = salesStatusMap[row.id || 0];
+                    if (!info || info.status === 'Unpaid') {
+                      return <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Unpaid</span>;
+                    }
+                    if (info.status === 'Paid') {
+                      return <span style={{ background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Paid</span>;
+                    }
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', width: 'fit-content' }}>
+                          Partially Paid
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#64748b' }}>Bal: Rs. {info.balance.toFixed(2)}</span>
+                      </div>
+                    );
+                  }
+                },
                 {
                   header: 'Actions',
                   accessor: (row) => (
@@ -768,6 +881,26 @@ export default function App() {
                 { header: 'Input Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
                 { header: 'Total Payable (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
                 {
+                  header: 'Payment Status',
+                  accessor: (row) => {
+                    const info = purchaseStatusMap[row.id || 0];
+                    if (!info || info.status === 'Unpaid') {
+                      return <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Unpaid</span>;
+                    }
+                    if (info.status === 'Paid') {
+                      return <span style={{ background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Paid</span>;
+                    }
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', width: 'fit-content' }}>
+                          Partially Paid
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#64748b' }}>Bal: Rs. {info.balance.toFixed(2)}</span>
+                      </div>
+                    );
+                  }
+                },
+                {
                   header: 'Actions',
                   accessor: (row) => (
                     <div style={{ display: 'flex', gap: '6px' }}>
@@ -817,12 +950,32 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Customers</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer registry & party master</p></div>
               <button onClick={() => { setEditingId(null); setCustomerForm({ customer_name: '', customer_type: 'Company', gst_category: 'Unregistered', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowCustomerModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Customer</button>
             </div>
+
+            {/* Total Receivables Summary Card */}
+            <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Receivables (Debtors)</span>
+              <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0369a1' }}>
+                Rs. {partyOutstanding.total_receivable.toFixed(2)}
+              </h3>
+            </div>
+
             <DataTable<Customer>
               columns={[
                 { header: 'Customer Name', accessor: 'customer_name' },
                 { header: 'Type', accessor: 'customer_type' },
                 { header: 'GSTIN', accessor: r => r.gstin || '-' },
                 { header: 'City', accessor: r => r.city || '-' },
+                {
+                  header: 'Outstanding Balance',
+                  accessor: (row) => {
+                    const bal = partyOutstanding.customers[row.customer_name] || 0;
+                    return (
+                      <strong style={{ color: bal > 0 ? '#b91c1c' : '#15803d' }}>
+                        Rs. {bal.toFixed(2)} {bal > 0 ? 'Dr' : ''}
+                      </strong>
+                    );
+                  }
+                },
                 {
                   header: 'Action',
                   accessor: (row) => (
@@ -852,12 +1005,32 @@ export default function App() {
               <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Suppliers (Vendors)</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Supplier registry with GSTIN & accounts tracking</p></div>
               <button onClick={() => { setEditingId(null); setSupplierForm({ supplier_name: '', supplier_type: 'Company', gst_category: 'Registered Regular', gstin: '', email: '', mobile_no: '', city: '', postal_code: '' }); setShowSupplierModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Supplier</button>
             </div>
+
+            {/* Total Payables Summary Card */}
+            <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Payables (Creditors)</span>
+              <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
+                Rs. {partyOutstanding.total_payable.toFixed(2)}
+              </h3>
+            </div>
+
             <DataTable<Supplier>
               columns={[
                 { header: 'Supplier Name', accessor: 'supplier_name' },
                 { header: 'GSTIN', accessor: r => r.gstin || '-' },
                 { header: 'GST Category', accessor: 'gst_category' },
                 { header: 'City', accessor: r => r.city || '-' },
+                {
+                  header: 'Outstanding Payable',
+                  accessor: (row) => {
+                    const bal = partyOutstanding.suppliers[row.supplier_name] || 0;
+                    return (
+                      <strong style={{ color: bal > 0 ? '#dc2626' : '#15803d' }}>
+                        Rs. {bal.toFixed(2)} {bal > 0 ? 'Cr' : ''}
+                      </strong>
+                    );
+                  }
+                },
                 {
                   header: 'Action',
                   accessor: (row) => (
@@ -922,47 +1095,118 @@ export default function App() {
         )}
 
         {/* TAB 6: STOCK */}
-        {activeTab === 'stock' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div><h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items</h1><p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Current warehouse inventory balance</p></div>
-              <button onClick={() => { setEditingId(null); setItemForm({ item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0' }); setShowItemModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}><Plus size={16} /> New Item</button>
+        {activeTab === 'stock' && (() => {
+          // ઇન્વેન્ટરી સમરી ગણતરી
+          const totalItemsCount = items.length;
+          const totalValuation = items.reduce((sum, it) => sum + ((parseFloat(String(it.current_stock)) || 0) * (parseFloat(String(it.standard_rate)) || 0)), 0);
+          const lowStockCount = items.filter(it => (parseFloat(String(it.current_stock)) || 0) <= 10).length;
+
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                  <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Items & Inventory</h1>
+                  <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time warehouse stock balance, valuation and reorder health</p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => {
+                      const exportData = items.map(it => ({
+                        'Item Code': it.item_code,
+                        'Item Name': it.item_name,
+                        'Category': it.category,
+                        'Unit': it.unit,
+                        'Rate (Rs)': it.standard_rate,
+                        'Current Stock': it.current_stock,
+                        'Stock Value (Rs)': ((parseFloat(String(it.current_stock)) || 0) * (parseFloat(String(it.standard_rate)) || 0)).toFixed(2),
+                        'Status': (parseFloat(String(it.current_stock)) || 0) <= 0 ? 'Out of Stock' : (parseFloat(String(it.current_stock)) || 0) <= 10 ? 'Low Stock' : 'In Stock'
+                      }));
+                      exportToCSV(exportData, 'Stock_Inventory_Report');
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                  >
+                    <Download size={16} /> Export Stock
+                  </button>
+                  <button onClick={() => { setEditingId(null); setItemForm({ item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0' }); setShowItemModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                    <Plus size={16} /> New Item
+                  </button>
+                </div>
+              </div>
+
+              {/* Inventory Summary & Low Stock Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
+                <div style={{ background: '#fff', padding: '18px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total SKUs / Items</span>
+                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0f172a' }}>{totalItemsCount} Products</h3>
+                </div>
+                <div style={{ background: '#fff', padding: '18px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Inventory Valuation</span>
+                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0284c7' }}>Rs. {totalValuation.toFixed(2)}</h3>
+                </div>
+                <div style={{ padding: '18px 20px', borderRadius: '10px', border: lowStockCount > 0 ? '1px solid #fecaca' : '1px solid #e2e8f0', background: lowStockCount > 0 ? '#fff5f5' : '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <span style={{ fontSize: '12px', color: lowStockCount > 0 ? '#b91c1c' : '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Low / Out of Stock Alert</span>
+                  <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: lowStockCount > 0 ? '#dc2626' : '#15803d' }}>
+                    {lowStockCount} Items Need Attention
+                  </h3>
+                </div>
+              </div>
+
+              <DataTable<Item>
+                columns={[
+                  { header: 'Code', accessor: 'item_code' },
+                  { header: 'Item Name', accessor: 'item_name' },
+                  { header: 'Category', accessor: 'category' },
+                  { header: 'Rate (Rs.)', accessor: r => `Rs. ${r.standard_rate}` },
+                  { header: 'Current Stock', accessor: r => <strong>{r.current_stock} {r.unit}</strong> },
+                  {
+                    header: 'Stock Value',
+                    accessor: r => (
+                      <span style={{ color: '#0284c7', fontWeight: '600' }}>
+                        Rs. {((parseFloat(String(r.current_stock)) || 0) * (parseFloat(String(r.standard_rate)) || 0)).toFixed(2)}
+                      </span>
+                    )
+                  },
+                  {
+                    header: 'Inventory Health',
+                    accessor: (r) => {
+                      const stock = parseFloat(String(r.current_stock)) || 0;
+                      if (stock <= 0) {
+                        return <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Out of Stock</span>;
+                      } else if (stock <= 10) {
+                        return <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Low Stock ({stock})</span>;
+                      }
+                      return <span style={{ background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>In Stock</span>;
+                    }
+                  },
+                  {
+                    header: 'Action',
+                    accessor: (row) => (
+                      <button
+                        onClick={() => {
+                          setEditingId(row.id || null);
+                          setItemForm({
+                            item_code: row.item_code,
+                            item_name: row.item_name,
+                            category: row.category,
+                            unit: row.unit,
+                            standard_rate: row.standard_rate.toString(),
+                            current_stock: row.current_stock.toString()
+                          });
+                          setShowItemModal(true);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
+                      >
+                        <Edit2 size={12} /> Edit
+                      </button>
+                    )
+                  }
+                ]}
+                data={items}
+                emptyMessage="No items registered in stock."
+              />
             </div>
-            <DataTable<Item>
-              columns={[
-                { header: 'Code', accessor: 'item_code' },
-                { header: 'Item Name', accessor: 'item_name' },
-                { header: 'Category', accessor: 'category' },
-                { header: 'Rate (Rs.)', accessor: r => `Rs. ${r.standard_rate}` },
-                { header: 'Current Stock', accessor: r => <strong>{r.current_stock} {r.unit}</strong> },
-                {
-                  header: 'Action',
-                  accessor: (row) => (
-                    <button
-                      onClick={() => {
-                        setEditingId(row.id || null);
-                        setItemForm({
-                          item_code: row.item_code,
-                          item_name: row.item_name,
-                          category: row.category,
-                          unit: row.unit,
-                          standard_rate: row.standard_rate.toString(),
-                          current_stock: row.current_stock.toString()
-                        });
-                        setShowItemModal(true);
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1' }}
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
-                  )
-                }
-              ]}
-              data={items}
-              emptyMessage="No items registered in stock."
-            />
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 7: STOCK MOVEMENT LEDGER */}
         {activeTab === 'stock-ledger' && (

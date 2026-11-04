@@ -182,3 +182,50 @@ class DashboardSummaryAPIView(APIView):
             "bank_balance": bank_balance
         }
         return Response(data)
+
+class PartyOutstandingAPIView(APIView):
+    def get(self, request):
+        # Customers (Debtors): Debit વધે (વેચાણ), Credit ઘટે (ચુકવણી)
+        debtor_entries = GLEntry.objects.filter(account="Debtors", is_cancelled=False)
+        cust_summary = debtor_entries.values('party').annotate(
+            total_debit=Sum('debit'),
+            total_credit=Sum('credit')
+        ).order_by('-total_debit')
+
+        customers_data = {}
+        total_receivable = Decimal('0.00')
+
+        for c in cust_summary:
+            party = c['party'] or 'Unknown'
+            billed = c['total_debit'] or Decimal('0.00')
+            received = c['total_credit'] or Decimal('0.00')
+            bal = billed - received
+            if bal > Decimal('0.00'):
+                total_receivable += bal
+            customers_data[party] = float(bal)
+
+        # Suppliers (Creditors): Credit વધે (ખરીદી), Debit ઘટે (ચુકવણી)
+        creditor_entries = GLEntry.objects.filter(account="Creditors", is_cancelled=False)
+        supp_summary = creditor_entries.values('party').annotate(
+            total_credit=Sum('credit'),
+            total_debit=Sum('debit')
+        ).order_by('-total_credit')
+
+        suppliers_data = {}
+        total_payable = Decimal('0.00')
+
+        for s in supp_summary:
+            party = s['party'] or 'Unknown'
+            billed = s['total_credit'] or Decimal('0.00')
+            paid = s['total_debit'] or Decimal('0.00')
+            bal = billed - paid
+            if bal > Decimal('0.00'):
+                total_payable += bal
+            suppliers_data[party] = float(bal)
+
+        return Response({
+            'customers': customers_data,
+            'suppliers': suppliers_data,
+            'total_receivable': float(total_receivable),
+            'total_payable': float(total_payable)
+        })

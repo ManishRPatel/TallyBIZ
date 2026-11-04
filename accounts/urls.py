@@ -6,6 +6,7 @@ from .views import (
     FinancialStatementsAPIView,
     GSTReturnSummaryAPIView,
     DashboardSummaryAPIView,
+    PartyOutstandingAPIView,
 )
 
 urlpatterns = [
@@ -15,4 +16,5 @@ urlpatterns = [
     path('financial-statements/', FinancialStatementsAPIView.as_view(), name='financial-statements'),
     path('gst-returns/', GSTReturnSummaryAPIView.as_view(), name='gst-return-summary'),
     path('dashboard-summary/', DashboardSummaryAPIView.as_view(), name='dashboard-summary'),
+    path('party-outstanding/', PartyOutstandingAPIView.as_view(), name='party-outstanding'),
 ]
