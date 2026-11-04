@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
-import { DataTable } from './components/DataTable';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
 import { PaymentPrintModal } from './components/PaymentPrintModal';
@@ -13,11 +12,15 @@ import { StockTab } from './components/tabs/StockTab';
 import { PaymentsTab } from './components/tabs/PaymentsTab';
 import { CustomersTab } from './components/tabs/CustomersTab';
 import { SuppliersTab } from './components/tabs/SuppliersTab';
+import { StockLedgerTab } from './components/tabs/StockLedgerTab';
+import { AccountsTab } from './components/tabs/AccountsTab';
+import { GSTTab } from './components/tabs/GSTTab';
+import { ReportsTab } from './components/tabs/ReportsTab';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
 import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart } from 'lucide-react';
-import { X, Printer, Filter, RefreshCw, Layers, Download } from 'lucide-react';
+import { X, RefreshCw, Layers } from 'lucide-react';
 import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
-import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, exportToCSV, type DashboardSummary, type LineForm } from './utils/erpHelpers';
+import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, type DashboardSummary, type LineForm } from './utils/erpHelpers';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports' | 'gst'>('selling');
@@ -573,284 +576,51 @@ export default function App() {
 
         {/* TAB 7: STOCK MOVEMENT LEDGER */}
         {activeTab === 'stock-ledger' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Movement & Valuation Ledger</h1>
-                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Chronological register of inward receipts, outward issues & item balances</p>
-              </div>
-              <button
-                onClick={() => setStockItemFilter('all')}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
-              >
-                <RefreshCw size={14} /> Reset Item Filter
-              </button>
-            </div>
-
-            <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
-                <Filter size={16} /> Filter by Item:
-              </div>
-              <div style={{ flex: 1, maxWidth: '400px' }}>
-                <select
-                  value={stockItemFilter}
-                  onChange={e => setStockItemFilter(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
-                >
-                  <option value="all" style={{ color: '#0f172a' }}>All Inventory Items</option>
-                  {items.map(it => (
-                    <option key={it.id} value={it.id} style={{ color: '#0f172a' }}>{it.item_name} ({it.item_code})</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <DataTable<StockLedgerRow>
-              columns={[
-                { header: 'Date', accessor: 'posting_date' },
-                { header: 'Item Name', accessor: r => <strong>{r.item_name} ({r.item_code})</strong> },
-                { header: 'Voucher', accessor: r => `${r.voucher_type} #${r.voucher_no}` },
-                { header: 'Inward (+)', accessor: r => r.in_qty > 0 ? <span style={{ color: '#15803d', fontWeight: '600' }}>+{r.in_qty}</span> : '-' },
-                { header: 'Outward (-)', accessor: r => r.out_qty > 0 ? <span style={{ color: '#b91c1c', fontWeight: '600' }}>-{r.out_qty}</span> : '-' },
-                { header: 'Balance Qty', accessor: r => <strong>{r.balance_qty}</strong> },
-                { header: 'Valuation Rate', accessor: r => `Rs. ${r.valuation_rate.toFixed(2)}` },
-                { header: 'Total Value', accessor: r => <strong style={{ color: '#0284c7' }}>Rs. {r.balance_value.toFixed(2)}</strong> }
-              ]}
-              data={stockLedger}
-              emptyMessage="No stock transactions found for the selected criteria."
-            />
-          </div>
+          <StockLedgerTab
+            stockLedger={stockLedger}
+            items={items}
+            stockItemFilter={stockItemFilter}
+            setStockItemFilter={setStockItemFilter}
+          />
         )}
 
         {/* TAB 8: GL WITH FILTERS */}
         {activeTab === 'accounts' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>General Ledger Entries</h1>
-                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Unified double-entry bookkeeping ledger & individual party statements</p>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => setShowLedgerPrintModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
-                >
-                  <Printer size={14} /> Print Statement
-                </button>
-                <button
-                  onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); setFromDate(''); setToDate(''); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', color: '#475569', fontWeight: '500' }}
-                >
-                  <RefreshCw size={14} /> Reset Filters
-                </button>
-              </div>
-            </div>
-
-            <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7', fontWeight: '600', fontSize: '14px' }}>
-                <Filter size={16} /> Filters:
-              </div>
-
-              <div style={{ flex: 1, minWidth: '180px' }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Account</label>
-                <select
-                  value={glAccountFilter}
-                  onChange={e => setGlAccountFilter(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
-                >
-                  <option value="all" style={{ color: '#0f172a' }}>All Accounts (Complete Ledger)</option>
-                  <option value="Debtors" style={{ color: '#0f172a' }}>Debtors (Customer Accounts)</option>
-                  <option value="Creditors" style={{ color: '#0f172a' }}>Creditors (Supplier Accounts)</option>
-                  <option value="Bank Account" style={{ color: '#0f172a' }}>Bank Account</option>
-                  <option value="Sales Income" style={{ color: '#0f172a' }}>Sales Income</option>
-                  <option value="Stock Received But Not Billed" style={{ color: '#0f172a' }}>Stock Received (Purchases)</option>
-                  <option value="Input GST" style={{ color: '#0f172a' }}>Input GST</option>
-                  <option value="Output GST" style={{ color: '#0f172a' }}>Output GST</option>
-                </select>
-              </div>
-
-              <div style={{ flex: 1, minWidth: '180px' }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Filter by Party</label>
-                <select
-                  value={glPartyFilter}
-                  onChange={e => setGlPartyFilter(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', color: '#0f172a' }}
-                >
-                  <option value="all" style={{ color: '#0f172a' }}>All Parties</option>
-                  {allPartyNames.map((p, idx) => (
-                    <option key={idx} value={p} style={{ color: '#0f172a' }}>{p}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ width: '140px' }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>From Date</label>
-                <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
-              </div>
-
-              <div style={{ width: '140px' }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>To Date</label>
-                <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
-              <div style={{ background: '#fff', padding: '14px 18px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>Total Debits:</span>
-                <h3 style={{ margin: '4px 0 0 0', fontSize: '18px', color: '#0369a1' }}>Rs. {totalDebit.toFixed(2)}</h3>
-              </div>
-              <div style={{ background: '#fff', padding: '14px 18px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>Total Credits:</span>
-                <h3 style={{ margin: '4px 0 0 0', fontSize: '18px', color: '#15803d' }}>Rs. {totalCredit.toFixed(2)}</h3>
-              </div>
-              <div style={{ background: '#fff', padding: '14px 18px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>Statement Closing Balance:</span>
-                <h3 style={{ margin: '4px 0 0 0', fontSize: '18px', color: closingBalance >= 0 ? '#0f172a' : '#b91c1c' }}>
-                  Rs. {Math.abs(closingBalance).toFixed(2)} {closingBalance >= 0 ? 'Dr' : 'Cr'}
-                </h3>
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                const exportData = glEntries.map(entry => ({
-                  'Date': entry.posting_date,
-                  'Voucher Type': entry.voucher_type,
-                  'Voucher No': entry.voucher_no,
-                  'Account': entry.account,
-                  'Party': entry.party || '-',
-                  'Debit (Rs)': entry.debit,
-                  'Credit (Rs)': entry.credit,
-                  'Balance (Rs)': entry.balance
-                }));
-                exportToCSV(exportData, 'General_Ledger');
-              }}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
-            >
-              <Download size={14} /> Export CSV
-            </button>
-
-            <DataTable<GLEntryRow>
-              columns={[
-                { header: 'Date', accessor: 'posting_date' },
-                { header: 'Voucher', accessor: r => <strong>{r.voucher_type} #{r.voucher_no}</strong> },
-                { header: 'Account', accessor: 'account' },
-                { header: 'Party', accessor: r => r.party || '-' },
-                { header: 'Debit (Rs.)', accessor: r => Number(r.debit) > 0 ? <span style={{ color: '#0369a1', fontWeight: '600' }}>Rs. {Number(r.debit).toFixed(2)}</span> : '-' },
-                { header: 'Credit (Rs.)', accessor: r => Number(r.credit) > 0 ? <span style={{ color: '#15803d', fontWeight: '600' }}>Rs. {Number(r.credit).toFixed(2)}</span> : '-' },
-                { header: 'Running Bal (Rs.)', accessor: r => <strong>Rs. {Number(r.balance).toFixed(2)}</strong> }
-              ]}
-              data={glEntries}
-              emptyMessage="No ledger entries match the selected filters."
-            />
-          </div>
+          <AccountsTab
+            glEntries={glEntries}
+            allPartyNames={allPartyNames}
+            glAccountFilter={glAccountFilter}
+            setGlAccountFilter={setGlAccountFilter}
+            glPartyFilter={glPartyFilter}
+            setGlPartyFilter={setGlPartyFilter}
+            fromDate={fromDate}
+            setFromDate={setFromDate}
+            toDate={toDate}
+            setToDate={setToDate}
+            totalDebit={totalDebit}
+            totalCredit={totalCredit}
+            closingBalance={closingBalance}
+            setShowLedgerPrintModal={setShowLedgerPrintModal}
+          />
         )}
 
+        {/* TAB 9: GST */}
         {activeTab === 'gst' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>GST Return Summary</h1>
-                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Monthly breakdown of Output GST, Input Tax Credit (ITC) and Net Liability</p>
-              </div>
-              <button onClick={() => setShowGstModal(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                <Printer size={16} /> Print GST Report
-              </button>
-            </div>
-
-            <DataTable
-              columns={[
-                { header: 'Month', accessor: 'month' },
-                { header: 'Taxable Sales (Rs.)', accessor: r => `Rs. ${r.sales_net.toFixed(2)}` },
-                { header: 'Output GST (Liability)', accessor: r => <strong style={{ color: '#0369a1' }}>Rs. {r.output_tax.toFixed(2)}</strong> },
-                { header: 'Taxable Purchases (Rs.)', accessor: r => `Rs. ${r.purchase_net.toFixed(2)}` },
-                { header: 'Input ITC (Credit)', accessor: r => <strong style={{ color: '#15803d' }}>Rs. {r.input_itc.toFixed(2)}</strong> },
-                { header: 'Net Tax Status', accessor: r => <strong style={{ color: r.net_gst_payable > 0 ? '#b91c1c' : '#0284c7' }}>{r.net_gst_payable > 0 ? `Payable: Rs. ${r.net_gst_payable.toFixed(2)}` : `ITC Credit: Rs. ${r.itc_carry_forward.toFixed(2)}`}</strong> }
-              ]}
-              data={gstData}
-              emptyMessage="No GST transactions found for returns."
-            />
-          </div>
+          <GSTTab
+            gstData={gstData}
+            setShowGSTPrintModal={setShowGstModal}
+          />
         )}
 
-        {/* TAB 9: REPORTS */}
-        {activeTab === 'reports' && (finance ? (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Financial Statements</h1>
-                <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time Profit & Loss and Balance Sheet derived from General Ledger</p>
-              </div>
-              <button
-                onClick={() => setShowFinancePrintModal(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
-              >
-                <Printer size={16} /> Print Financial Statements
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
-              <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0' }}>Profit & Loss Statement</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Sales Income:</span><strong>Rs. {finance.income.sales.toFixed(2)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#dc2626' }}><span>Purchases:</span><strong>- Rs. {finance.expense.purchases.toFixed(2)}</strong></div>
-                  <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 'bold', color: finance.profit.gross_profit >= 0 ? '#15803d' : '#b91c1c' }}>
-                    <span>Gross Profit / (Loss):</span><span>Rs. {finance.profit.gross_profit.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0' }}>GST Tax Settlement</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Output GST:</span><strong>Rs. {finance.gst.output_liability.toFixed(2)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d' }}><span>Input GST ITC:</span><strong>- Rs. {finance.gst.input_itc.toFixed(2)}</strong></div>
-                  <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 'bold', color: finance.gst.net_payable > 0 ? '#b91c1c' : '#0284c7' }}>
-                    <span>{finance.gst.net_payable > 0 ? 'Net GST Payable:' : 'Eligible ITC Refund:'}</span>
-                    <span>Rs. {Math.abs(finance.gst.net_payable).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0' }}>Balance Sheet</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
-                <div>
-                  <h3 style={{ fontSize: '14px', textTransform: 'uppercase', color: '#64748b', marginBottom: '12px' }}>Assets</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Bank & Cash:</span><strong>Rs. {finance.balance_sheet.assets.bank_cash.toFixed(2)}</strong></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Debtors:</span><strong>Rs. {finance.balance_sheet.assets.debtors_receivable.toFixed(2)}</strong></div>
-                    <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#0369a1' }}><span>Total Current Assets:</span><span>Rs. {finance.balance_sheet.assets.total_assets.toFixed(2)}</span></div>
-                  </div>
-                </div>
-                <div>
-                  <h3 style={{ fontSize: '14px', textTransform: 'uppercase', color: '#64748b', marginBottom: '12px' }}>Liabilities</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Creditors:</span><strong>Rs. {finance.balance_sheet.liabilities.creditors_payable.toFixed(2)}</strong></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>GST Tax Payable:</span><strong>Rs. {finance.balance_sheet.liabilities.gst_payable.toFixed(2)}</strong></div>
-                    <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#b91c1c' }}><span>Total Current Liabilities:</span><span>Rs. {finance.balance_sheet.liabilities.total_liabilities.toFixed(2)}</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ background: '#fff', padding: '48px 32px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-            <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-              {loading
-                ? 'Loading financial statements...'
-                : loadError
-                  ? 'Financial statements could not be loaded. Check the banner above and retry.'
-                  : 'No financial statements available yet.'}
-            </p>
-          </div>
-        ))}
+        {/* TAB 10: REPORTS */}
+        {activeTab === 'reports' && (
+          <ReportsTab
+            finance={finance}
+            loading={loading}
+            loadError={loadError}
+            setShowFinancePrintModal={setShowFinancePrintModal}
+          />
+        )}
       </main>
 
       {/* Invoice Print Modal */}
