@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { X, Printer } from 'lucide-react';
+import { X, Printer, Download } from 'lucide-react';
 import type { SalesInvoice, Customer, Item } from '../types/erp';
+import html2pdf from 'html2pdf.js';
 
 interface InvoicePrintModalProps {
   invoice: SalesInvoice | null;
@@ -32,6 +33,21 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPDF = () => {
+    const element = document.getElementById('printable-invoice');
+    if (!element) return;
+
+    const opt: any = {
+      margin: [10, 10, 10, 10],
+      filename: `${invoice.invoice_number}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    (html2pdf as any)().set(opt).from(element).save();
   };
 
   const netTotal = parseFloat(invoice.net_total.toString()) || 0;
@@ -132,6 +148,24 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
               }}
             >
               <Printer size={16} /> Print / Save PDF
+            </button>
+            <button
+              onClick={handleDownloadPDF}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#10b981',
+                color: '#fff',
+                border: 'none',
+                padding: '8px 14px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '13px'
+              }}
+            >
+              <Download size={15} /> Download PDF
             </button>
             <button
               onClick={onClose}
