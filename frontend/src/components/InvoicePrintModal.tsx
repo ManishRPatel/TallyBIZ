@@ -16,8 +16,6 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   itemsMaster,
   onClose,
 }) => {
-  // Hooks must run unconditionally, so the effect is declared before the
-  // null-guard below.
   const formattedParty = (invoice?.customer_name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
   const targetFileName = invoice ? `Invoice_${invoice.invoice_number}_${formattedParty}` : '';
 
@@ -55,6 +53,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   const grandTotal = parseFloat(invoice.grand_total.toString()) || 0;
   const halfTax = taxTotal / 2;
 
+  // Inter-State Check: જો GSTIN 24 સિવાયના રાજ્યનો હોય તો IGST ગણાય
+  const isInterState = customer?.gstin && !customer.gstin.startsWith('24');
+
   return (
     <div
       style={{
@@ -72,35 +73,29 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 0;
+          margin: 12mm;
         }
         @media print {
-          html, body {
-            width: 100% !important;
-            height: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
+          body {
+            visibility: hidden !important;
             background: #fff !important;
           }
-          body * {
-            visibility: hidden;
+          .no-print {
+            display: none !important;
           }
           #printable-invoice, #printable-invoice * {
-            visibility: visible;
+            visibility: visible !important;
           }
           #printable-invoice {
-            position: absolute !important;
+            position: fixed !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
             margin: 0 !important;
-            padding: 15mm !important;
+            padding: 0 !important;
             box-shadow: none !important;
             border: none !important;
-            box-sizing: border-box !important;
-          }
-          .no-print {
-            display: none !important;
+            background: #fff !important;
           }
         }
       `}</style>
@@ -117,7 +112,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           maxHeight: '94vh',
         }}
       >
-        {/* Controls Header */}
+        {/* Controls Header (Print / Close Buttons) */}
         <div
           className="no-print"
           style={{
@@ -192,14 +187,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           id="printable-invoice"
           style={{
             padding: '30px 36px',
-            overflowY: 'auto',
             fontFamily: 'system-ui, -apple-system, sans-serif',
             color: '#0f172a',
             boxSizing: 'border-box',
             width: '100%',
+            background: '#fff',
           }}
         >
-          {/* Header */}
+          {/* 1. Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
             <div style={{ maxWidth: '60%' }}>
               <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
@@ -222,7 +217,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             </div>
           </div>
 
-          {/* Customer / Billed To Section */}
+          {/* 2. Customer / Billed To Section */}
           <div style={{ margin: '18px 0', padding: '12px 16px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
             <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 'bold' }}>
               Billed To (Customer Details)
@@ -231,12 +226,13 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
               {invoice.customer_name}
             </h3>
             <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-              {customer?.city ? `${customer.city}, Gujarat` : 'Ahmedabad, Gujarat'}<br />
+              {customer?.address && <>{customer.address}<br /></>}
+              {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}<br />
               <strong>GSTIN:</strong> {customer?.gstin || 'Unregistered'} | <strong>Category:</strong> {customer?.gst_category || 'Regular'}
             </p>
           </div>
 
-          {/* Items Table */}
+          {/* 3. Items Table */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', fontSize: '12px', tableLayout: 'auto' }}>
             <thead>
               <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
@@ -272,21 +268,30 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             </tbody>
           </table>
 
-          {/* Calculation & Tax Breakup Summary */}
+          {/* 4. Single Clean Tax Breakdown & Grand Total */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
             <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
                 <span>Taxable Value (Net):</span>
                 <span>Rs. {netTotal.toFixed(2)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                <span>CGST (9.00%):</span>
-                <span>Rs. {halfTax.toFixed(2)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                <span>SGST (9.00%):</span>
-                <span>Rs. {halfTax.toFixed(2)}</span>
-              </div>
+              {isInterState ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                  <span>IGST (18.00%):</span>
+                  <span>Rs. {taxTotal.toFixed(2)}</span>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                    <span>CGST (9.00%):</span>
+                    <span>Rs. {halfTax.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                    <span>SGST (9.00%):</span>
+                    <span>Rs. {halfTax.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0369a1', fontWeight: 'bold' }}>
                 <span>Total GST (18.00%):</span>
                 <span>Rs. {taxTotal.toFixed(2)}</span>
@@ -299,7 +304,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             </div>
           </div>
 
-          {/* Footer Terms & Sign */}
+          {/* 5. Footer Terms & Sign */}
           <div style={{ marginTop: '36px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '11px', color: '#64748b' }}>
             <div>
               <p style={{ margin: '0 0 2px 0', fontWeight: 'bold', color: '#334155' }}>Terms & Conditions:</p>

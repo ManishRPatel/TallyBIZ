@@ -640,6 +640,10 @@ export default function App() {
             loading={loading}
             loadError={loadError}
             setShowFinancePrintModal={setShowFinancePrintModal}
+            onDrillDown={(accountName: string) => {
+              setGlAccountFilter(accountName);
+              setActiveTab('accounts');
+            }}
           />
         )}
       </main>
@@ -705,18 +709,186 @@ export default function App() {
         <FinancialReportPrintModal finance={finance} onClose={() => setShowFinancePrintModal(false)} />
       )}
 
-      {/* Modals with red cancel buttons */}
+      {/* SUPPLIER MODAL */}
       {showSupplierModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Supplier' : 'New Supplier'}</h3><button onClick={() => setShowSupplierModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
-            <form onSubmit={handleSaveSupplier} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Supplier Name *</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={supplierForm.supplier_name} onChange={e => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })} /></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>GSTIN</label><input style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={supplierForm.gstin || ''} onChange={e => setSupplierForm({ ...supplierForm, gstin: e.target.value })} /></div>
-              <div style={{ display: 'flex', gap: '10px' }}><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>City</label><input style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={supplierForm.city || ''} onChange={e => setSupplierForm({ ...supplierForm, city: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Mobile</label><input style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={supplierForm.mobile_no || ''} onChange={e => setSupplierForm({ ...supplierForm, mobile_no: e.target.value })} /></div></div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowSupplierModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Supplier' : 'Save Supplier'}</button>
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0f172a' }}>
+                {editingId ? 'Edit Supplier' : 'New Supplier'}
+              </h2>
+              <button
+                onClick={() => setShowSupplierModal(false)}
+                style={{ background: '#fee2e2', color: '#dc2626', border: 'none', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSupplier} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Supplier Name */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Supplier / Vendor Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={supplierForm.supplier_name}
+                  onChange={e => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })}
+                  placeholder="e.g. Patel & Sons LLP / Amazon India"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Supplier Type & GST Category */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Supplier Type</label>
+                  <select
+                    value={supplierForm.supplier_type}
+                    onChange={e => setSupplierForm({ ...supplierForm, supplier_type: e.target.value as any })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
+                  >
+                    <option value="Company">Company (B2B)</option>
+                    <option value="Individual">Individual / Proprietor</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>GST Category</label>
+                  <select
+                    value={supplierForm.gst_category}
+                    onChange={e => {
+                      const cat = e.target.value;
+                      setSupplierForm({
+                        ...supplierForm,
+                        gst_category: cat as any,
+                        gstin: cat === 'Unregistered' ? '' : supplierForm.gstin
+                      });
+                    }}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
+                  >
+                    <option value="Registered Regular">Registered Regular</option>
+                    <option value="Registered Composition">Registered Composition</option>
+                    <option value="Unregistered">Unregistered</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* GSTIN */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                  GSTIN <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Unregistered હોય તો ખાલી રાખો)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={15}
+                  value={supplierForm.gstin || ''}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase();
+                    setSupplierForm({
+                      ...supplierForm,
+                      gstin: val,
+                      gst_category: val.length > 0 ? 'Registered Regular' : supplierForm.gst_category
+                    });
+                  }}
+                  placeholder="24AAAAA0000A1Z5"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Mobile & Email */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Mobile Number</label>
+                  <input
+                    type="text"
+                    value={supplierForm.mobile_no || ''}
+                    onChange={e => setSupplierForm({ ...supplierForm, mobile_no: e.target.value })}
+                    placeholder="9876543210"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email ID</label>
+                  <input
+                    type="email"
+                    value={supplierForm.email || ''}
+                    onChange={e => setSupplierForm({ ...supplierForm, email: e.target.value })}
+                    placeholder="vendor@example.com"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              {/* City & Postal Code */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>City</label>
+                  <input
+                    type="text"
+                    value={supplierForm.city || ''}
+                    onChange={e => setSupplierForm({ ...supplierForm, city: e.target.value })}
+                    placeholder="Mumbai / Ahmedabad"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Pincode / Postal Code</label>
+                  <input
+                    type="text"
+                    value={supplierForm.postal_code || ''}
+                    onChange={e => setSupplierForm({ ...supplierForm, postal_code: e.target.value })}
+                    placeholder="400001"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              {/* Address */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                  Address (Street / Building / Area)
+                </label>
+                <textarea
+                  rows={2}
+                  value={supplierForm.address || ''}
+                  onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
+                  placeholder="e.g. 101, Industrial Estate, Ring Road"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    marginTop: '4px',
+                    resize: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowSupplierModal(false)}
+                  style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  {editingId ? 'Update Supplier' : 'Save Supplier'}
+                </button>
               </div>
             </form>
           </div>
@@ -761,16 +933,186 @@ export default function App() {
         </div>
       )}
 
+      {/* CUSTOMER MODAL */}
       {showCustomerModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Customer' : 'New Customer'}</h3><button onClick={() => setShowCustomerModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
-            <form onSubmit={handleSaveCustomer} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer Name *</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={customerForm.customer_name} onChange={e => setCustomerForm({ ...customerForm, customer_name: e.target.value })} /></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>GSTIN</label><input style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={customerForm.gstin || ''} onChange={e => setCustomerForm({ ...customerForm, gstin: e.target.value })} /></div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowCustomerModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Customer' : 'Save Customer'}</button>
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0f172a' }}>
+                {editingId ? 'Edit Customer' : 'New Customer'}
+              </h2>
+              <button
+                onClick={() => setShowCustomerModal(false)}
+                style={{ background: '#fee2e2', color: '#dc2626', border: 'none', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCustomer} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Customer Name */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Customer Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={customerForm.customer_name}
+                  onChange={e => setCustomerForm({ ...customerForm, customer_name: e.target.value })}
+                  placeholder="e.g. Ramesh Patel / ABC Enterprises"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Customer Type & GST Category */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Customer Type</label>
+                  <select
+                    value={customerForm.customer_type}
+                    onChange={e => setCustomerForm({ ...customerForm, customer_type: e.target.value as any })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
+                  >
+                    <option value="Individual">Individual (B2C / Retail)</option>
+                    <option value="Company">Company (B2B)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>GST Category</label>
+                  <select
+                    value={customerForm.gst_category}
+                    onChange={e => {
+                      const cat = e.target.value;
+                      setCustomerForm({
+                        ...customerForm,
+                        gst_category: cat as any,
+                        gstin: cat === 'Unregistered' ? '' : customerForm.gstin
+                      });
+                    }}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
+                  >
+                    <option value="Unregistered">Unregistered</option>
+                    <option value="Registered Regular">Registered Regular</option>
+                    <option value="Registered Composition">Registered Composition</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* GSTIN (Optional) */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                  GSTIN <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Optional - B2C હોય તો ખાલી રાખો)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={15}
+                  value={customerForm.gstin || ''}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase();
+                    setCustomerForm({
+                      ...customerForm,
+                      gstin: val,
+                      gst_category: val.length > 0 ? 'Registered Regular' : customerForm.gst_category
+                    });
+                  }}
+                  placeholder="24AAAAA0000A1Z5"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Mobile & Email */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Mobile Number</label>
+                  <input
+                    type="text"
+                    value={customerForm.mobile_no || ''}
+                    onChange={e => setCustomerForm({ ...customerForm, mobile_no: e.target.value })}
+                    placeholder="9876543210"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email ID</label>
+                  <input
+                    type="email"
+                    value={customerForm.email || ''}
+                    onChange={e => setCustomerForm({ ...customerForm, email: e.target.value })}
+                    placeholder="customer@example.com"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              {/* City & Postal Code */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>City</label>
+                  <input
+                    type="text"
+                    value={customerForm.city || ''}
+                    onChange={e => setCustomerForm({ ...customerForm, city: e.target.value })}
+                    placeholder="Ahmedabad"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Pincode / Postal Code</label>
+                  <input
+                    type="text"
+                    value={customerForm.postal_code || ''}
+                    onChange={e => setCustomerForm({ ...customerForm, postal_code: e.target.value })}
+                    placeholder="380001"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              {/* Address */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                  Address (Street / Building / Area)
+                </label>
+                <textarea
+                  rows={2}
+                  value={customerForm.address || ''}
+                  onChange={e => setCustomerForm({ ...customerForm, address: e.target.value })}
+                  placeholder="e.g. 402, Shivalik Business Center, SG Highway"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    marginTop: '4px',
+                    resize: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerModal(false)}
+                  style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                >
+                  {editingId ? 'Update Customer' : 'Save Customer'}
+                </button>
               </div>
             </form>
           </div>

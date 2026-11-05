@@ -8,6 +8,7 @@ export interface Customer {
   mobile_no?: string;
   city?: string;
   postal_code?: string;
+  address?: string;
 }
 
 export interface Supplier {
@@ -20,6 +21,7 @@ export interface Supplier {
   mobile_no?: string;
   city?: string;
   postal_code?: string;
+  address?: string;
 }
 
 export interface Item {

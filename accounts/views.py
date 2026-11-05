@@ -151,13 +151,15 @@ class FinancialStatementsAPIView(APIView):
         output_gst = (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
                      (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
 
-        net_gst_payable = output_gst - input_gst
+        net_gst = output_gst - input_gst
+        gst_payable = max(net_gst, Decimal('0.00'))
+        gst_credit = abs(net_gst) if net_gst < Decimal('0.00') else Decimal('0.00')
 
         debtors = (GLEntry.objects.filter(account="Debtors", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
                   (GLEntry.objects.filter(account="Debtors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
 
         creditors = (GLEntry.objects.filter(account="Creditors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
-                    (GLEntry.objects.filter(account="Creditors", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
+                    (GLEntry.objects.filter(account="Creditors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
 
         bank_balance = (GLEntry.objects.filter(account="Bank Account", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
                        (GLEntry.objects.filter(account="Bank Account", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
@@ -168,17 +170,18 @@ class FinancialStatementsAPIView(APIView):
             "income": { "sales": float(net_sales), "total_income": float(net_sales) },
             "expense": { "purchases": float(total_purchases), "total_expense": float(total_purchases) },
             "profit": { "gross_profit": float(gross_profit), "net_profit": float(gross_profit) },
-            "gst": { "input_itc": float(input_gst), "output_liability": float(output_gst), "net_payable": float(net_gst_payable) },
+            "gst": { "input_itc": float(input_gst), "output_liability": float(output_gst), "net_payable": float(net_gst) },
             "balance_sheet": {
                 "assets": {
                     "bank_cash": float(bank_balance),
                     "debtors_receivable": float(debtors),
-                    "total_assets": float(bank_balance + debtors)
+                    "gst_credit": float(gst_credit),
+                    "total_assets": float(bank_balance + debtors + gst_credit)
                 },
                 "liabilities": {
                     "creditors_payable": float(creditors),
-                    "gst_payable": float(max(net_gst_payable, Decimal('0.00'))),
-                    "total_liabilities": float(creditors + max(net_gst_payable, Decimal('0.00')))
+                    "gst_payable": float(gst_payable),
+                    "total_liabilities": float(creditors + gst_payable)
                 }
             }
         })

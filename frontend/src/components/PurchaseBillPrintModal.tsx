@@ -233,7 +233,8 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
               {bill.supplier_name}
             </h3>
             <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-              {supplier?.city ? `${supplier.city}, Gujarat` : 'Vendor Address Registered'}<br />
+              {supplier?.address && <>{supplier.address}<br /></>}
+              {[supplier?.city, supplier?.postal_code].filter(Boolean).join(' - ') || 'Vendor Address Registered'}<br />
               <strong>GSTIN:</strong> {supplier?.gstin || 'Unregistered'} | <strong>Category:</strong> {supplier?.gst_category || 'Regular Registered'}
             </p>
           </div>
@@ -275,31 +276,45 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
           </table>
 
           {/* Tax Breakdown & Total */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-            <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                <span>Subtotal (Net Purchases):</span>
-                <span>Rs. {netTotal.toFixed(2)}</span>
+          {(() => {
+            const isInterState = supplier?.gstin && !supplier.gstin.startsWith('24');
+            return (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                    <span>Subtotal (Net Purchases):</span>
+                    <span>Rs. {netTotal.toFixed(2)}</span>
+                  </div>
+                  {isInterState ? (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                      <span>Input IGST ITC (18.00%):</span>
+                      <span>Rs. {taxTotal.toFixed(2)}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                        <span>Input CGST ITC (9.00%):</span>
+                        <span>Rs. {halfTax.toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                        <span>Input SGST ITC (9.00%):</span>
+                        <span>Rs. {halfTax.toFixed(2)}</span>
+                      </div>
+                    </>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d', fontWeight: 'bold' }}>
+                    <span>Total Input Tax Credit:</span>
+                    <span>Rs. {taxTotal.toFixed(2)}</span>
+                  </div>
+                  <hr style={{ border: 'none', borderTop: '2px solid #0284c7', margin: '4px 0' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
+                    <span>Total Amount Payable:</span>
+                    <span style={{ color: '#0284c7' }}>Rs. {grandTotal.toFixed(2)}</span>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                <span>Input CGST ITC (9.00%):</span>
-                <span>Rs. {halfTax.toFixed(2)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                <span>Input SGST ITC (9.00%):</span>
-                <span>Rs. {halfTax.toFixed(2)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d', fontWeight: 'bold' }}>
-                <span>Total Input Tax Credit:</span>
-                <span>Rs. {taxTotal.toFixed(2)}</span>
-              </div>
-              <hr style={{ border: 'none', borderTop: '2px solid #0284c7', margin: '4px 0' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
-                <span>Total Amount Payable:</span>
-                <span style={{ color: '#0284c7' }}>Rs. {grandTotal.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Footer */}
           <div style={{ marginTop: '36px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '11px', color: '#64748b' }}>
