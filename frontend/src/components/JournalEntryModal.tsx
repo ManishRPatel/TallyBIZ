@@ -145,19 +145,18 @@ export const JournalEntryModal: FC<JournalEntryModalProps> = ({
                 {lines.map((line, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '8px 10px' }}>
-                      <input
-                        list={`account-options-${idx}`}
+                      <select
                         value={line.account}
                         onChange={e => handleLineChange(idx, 'account', e.target.value)}
-                        placeholder="Type or select account"
-                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                      />
-                      <datalist id={`account-options-${idx}`}>
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff' }}
+                      >
+                        <option value="">-- Select Account --</option>
                         {DEFAULT_ACCOUNTS.map((acc, aIdx) => (
-                          <option key={aIdx} value={acc} />
+                          <option key={aIdx} value={acc}>{acc}</option>
                         ))}
-                      </datalist>
+                      </select>
                     </td>
+                    
                     <td style={{ padding: '8px 10px' }}>
                       <select
                         value={line.party_name || ''}

@@ -8,6 +8,7 @@ from .views import (
     DashboardSummaryAPIView,
     PartyOutstandingAPIView,
     JournalEntryViewSet,
+    PaymentReconciliationAPIView,
 )
 
 urlpatterns = [
@@ -20,4 +21,5 @@ urlpatterns = [
     path('party-outstanding/', PartyOutstandingAPIView.as_view(), name='party-outstanding'),
     path('journal-entries/', JournalEntryViewSet.as_view({'get': 'list', 'post': 'create'}), name='journal-entry-list-create'),
     path('journal-entries/<int:pk>/', JournalEntryViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}), name='journal-entry-detail'),
+    path('reconciliation/', PaymentReconciliationAPIView.as_view(), name='payment-reconciliation'),
 ]

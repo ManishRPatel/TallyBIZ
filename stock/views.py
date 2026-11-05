@@ -31,7 +31,7 @@ class StockLedgerAPIView(APIView):
             filters['item_id'] = item_id
 
         # કાલક્રમિક (Chronological) સાચો ક્રમ: સૌથી જૂની એન્ટ્રી પહેલી જેથી બેલેન્સ સાચું વધે/ઘટે
-        entries = StockLedgerEntry.objects.filter(**filters).select_related('item').order_by('posting_date', 'id')
+        entries = StockLedgerEntry.objects.filter(**filters).select_related('item').order_by('posting_date', '-actual_qty', 'id')
 
         report = []
         running_balances = {}

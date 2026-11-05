@@ -88,4 +88,15 @@ class JournalEntryLine(models.Model):
 
     def __str__(self):
         return f"{self.account} | Dr: {self.debit} Cr: {self.credit}"
+
+class PaymentInvoiceAllocation(models.Model):
+    payment = models.ForeignKey(PaymentEntry, on_delete=models.CASCADE, related_name='allocations')
+    invoice_type = models.CharField(max_length=50)  # 'Sales Invoice' or 'Purchase Invoice'
+    invoice_id = models.IntegerField()
+    invoice_number = models.CharField(max_length=100)
+    allocated_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    allocated_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.payment.voucher_no} -> {self.invoice_number} (₹{self.allocated_amount})"
     

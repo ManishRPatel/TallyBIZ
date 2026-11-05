@@ -1,8 +1,7 @@
 import type { FC } from 'react';
-import { Plus, Printer, Trash2 } from 'lucide-react';
+import { Printer, Trash2 } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { PaymentEntry } from '../../types/erp';
-import { getNextPaymentNumber } from '../../utils/erpHelpers';
 
 interface PaymentsTabProps {
   payments: PaymentEntry[];
@@ -10,6 +9,7 @@ interface PaymentsTabProps {
   setShowPaymentModal: (show: boolean) => void;
   setSelectedPaymentForPrint: (payment: PaymentEntry | null) => void;
   handleDeletePayment: (id: number, voucherNo: string) => void;
+  onOpenReconciliation: () => void;
 }
 
 export const PaymentsTab: FC<PaymentsTabProps> = ({
@@ -18,32 +18,43 @@ export const PaymentsTab: FC<PaymentsTabProps> = ({
   setShowPaymentModal,
   setSelectedPaymentForPrint,
   handleDeletePayment,
+  onOpenReconciliation,
 }) => {
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Payment Entries</h1>
           <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer receipts & supplier vendor payments</p>
         </div>
-        <button
-          onClick={() => {
-            setPaymentForm((prev: any) => ({
-              ...prev,
-              voucher_no: getNextPaymentNumber(payments),
-              payment_type: 'Receive',
-              party_type: 'Customer',
-              party_name: '',
-              paid_amount: '0',
-              reference_no: '',
-              remarks: ''
-            }));
-            setShowPaymentModal(true);
-          }}
-          style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-        >
-          <Plus size={16} /> Make / Receive Payment
-        </button>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={onOpenReconciliation}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+          >
+            ⚡ Reconcile Payments
+          </button>
+          <button
+            onClick={() => {
+              setPaymentForm({
+                voucher_no: `PAY-${Date.now().toString().slice(-4)}`,
+                payment_type: 'Receive',
+                posting_date: new Date().toISOString().split('T')[0],
+                party_type: 'Customer',
+                party_name: '',
+                mode_of_payment: 'Bank',
+                paid_amount: '0',
+                reference_no: '',
+                remarks: ''
+              });
+              setShowPaymentModal(true);
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+          >
+            + Make / Receive Payment
+          </button>
+        </div>
       </div>
 
       <DataTable<PaymentEntry>

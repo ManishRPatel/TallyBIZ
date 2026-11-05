@@ -1,22 +1,53 @@
 from rest_framework import generics
 from django.db import transaction
 from decimal import Decimal
+from django.db.models import Sum
 from .models import Supplier, PurchaseInvoice
 from .serializers import SupplierSerializer, PurchaseInvoiceSerializer
 from stock.models import StockLedgerEntry
-from accounts.models import GLEntry
+from accounts.models import GLEntry, PaymentInvoiceAllocation
 
+
+# --- SUPPLIER VIEWS ---
 class SupplierListCreateAPIView(generics.ListCreateAPIView):
     queryset = Supplier.objects.all().order_by('-id')
     serializer_class = SupplierSerializer
+
 
 class SupplierRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
 
+
+# --- PURCHASE INVOICE VIEWS ---
 class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):
-    queryset = PurchaseInvoice.objects.all().order_by('-id')
+    queryset = PurchaseInvoice.objects.all().order_by('-posting_date', '-bill_number')
     serializer_class = PurchaseInvoiceSerializer
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        for item in response.data:
+            bill_id = item.get('id')
+            grand_total = Decimal(str(item.get('grand_total', 0) or 0))
+
+            allocated = PaymentInvoiceAllocation.objects.filter(
+                invoice_type='Purchase Invoice',
+                invoice_id=bill_id
+            ).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
+
+            outstanding = max(Decimal('0.00'), grand_total - allocated)
+            item['allocated_amount'] = float(allocated)
+            item['outstanding_amount'] = float(outstanding)
+
+            if outstanding <= Decimal('0.00') and grand_total > Decimal('0.00'):
+                item['payment_status'] = 'Paid'
+            elif allocated > Decimal('0.00'):
+                item['payment_status'] = 'Partly Paid'
+            else:
+                item['payment_status'] = 'Unpaid'
+
+        return response
+
 
 class PurchaseInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = PurchaseInvoice.objects.all()
@@ -24,15 +55,13 @@ class PurchaseInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroy
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        # 1. ખરીદેલી વસ્તુઓનો સ્ટોક પાછો ઘટાડો
         for item_row in instance.items.all():
             item_obj = item_row.item
             item_obj.current_stock -= item_row.quantity
             item_obj.save()
 
-        # 2. વાઉચર સાથે જોડાયેલ Stock અને GL Entries ડિલીટ કરો
         StockLedgerEntry.objects.filter(voucher_type='Purchase Invoice', voucher_no=instance.bill_number).delete()
         GLEntry.objects.filter(voucher_type='Purchase Invoice', voucher_no=instance.bill_number).delete()
+        PaymentInvoiceAllocation.objects.filter(invoice_type='Purchase Invoice', invoice_id=instance.id).delete()
 
-        # 3. પરચેઝ બિલ ડિલીટ કરો
         instance.delete()

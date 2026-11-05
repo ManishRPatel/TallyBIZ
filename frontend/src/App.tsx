@@ -17,6 +17,7 @@ import { AccountsTab } from './components/tabs/AccountsTab';
 import { GSTTab } from './components/tabs/GSTTab';
 import { ReportsTab } from './components/tabs/ReportsTab';
 import { JournalEntryModal } from './components/JournalEntryModal';
+import { PaymentReconciliationModal } from './components/PaymentReconciliationModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements, JournalEntryPayload } from './types/erp';
 import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart } from 'lucide-react';
 import { X, RefreshCw, Layers } from 'lucide-react';
@@ -57,6 +58,7 @@ export default function App() {
   const [gstData, setGstData] = useState<any[]>([]);
   const [showGstModal, setShowGstModal] = useState<boolean>(false);
   const [showJournalModal, setShowJournalModal] = useState<boolean>(false);
+  const [showReconciliationModal, setShowReconciliationModal] = useState<boolean>(false);
 
   // Request status
   const [loading, setLoading] = useState(false);
@@ -575,6 +577,7 @@ export default function App() {
             setShowPaymentModal={setShowPaymentModal}
             setSelectedPaymentForPrint={setSelectedPaymentForPrint}
             handleDeletePayment={handleDeletePayment}
+            onOpenReconciliation={() => setShowReconciliationModal(true)}
           />
         )}
 
@@ -687,6 +690,14 @@ export default function App() {
         onClose={() => setShowJournalModal(false)}
         onSave={handleSaveJournalEntry}
         allPartyNames={allPartyNames}
+      />
+
+      <PaymentReconciliationModal
+        isOpen={showReconciliationModal}
+        onClose={() => setShowReconciliationModal(false)}
+        customers={customers}
+        suppliers={suppliers}
+        onReconciliationDone={() => void loadData()}
       />
 
       {/* Financial Statements Print Modal */}
