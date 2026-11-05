@@ -124,3 +124,19 @@ export interface StockLedgerRow {
   valuation_rate: number;
   balance_value: number;
 }
+
+export interface JournalEntryLineForm {
+  account: string;
+  party_type?: string;
+  party_name?: string;
+  debit: string;
+  credit: string;
+}
+
+export interface JournalEntryPayload {
+  voucher_no: string;
+  posting_date: string;
+  voucher_type: 'Journal Entry' | 'Contra Entry' | 'Expense Entry';
+  narration: string;
+  lines: JournalEntryLineForm[];
+}

@@ -19,6 +19,7 @@ interface AccountsTabProps {
   totalCredit: number;
   closingBalance: number;
   setShowLedgerPrintModal: (show: boolean) => void;
+  onNewJournalEntry: () => void;
 }
 
 export const AccountsTab: FC<AccountsTabProps> = ({
@@ -36,6 +37,7 @@ export const AccountsTab: FC<AccountsTabProps> = ({
   totalCredit,
   closingBalance,
   setShowLedgerPrintModal,
+  onNewJournalEntry,
 }) => {
   return (
     <div>
@@ -50,6 +52,12 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
           >
             <Printer size={14} /> Print Statement
+          </button>
+          <button
+            onClick={onNewJournalEntry}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+          >
+            + New Journal Entry
           </button>
           <button
             onClick={() => { setGlAccountFilter('all'); setGlPartyFilter('all'); setFromDate(''); setToDate(''); }}

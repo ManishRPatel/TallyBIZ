@@ -1,4 +1,4 @@
-from rest_framework import generics
+from rest_framework import generics, viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db.models import Sum
@@ -6,8 +6,8 @@ from selling.models import SalesInvoice
 from buying.models import PurchaseInvoice
 from django.db.models.functions import TruncMonth
 from decimal import Decimal
-from .models import GLEntry, PaymentEntry
-from .serializers import PaymentEntrySerializer
+from .models import GLEntry, PaymentEntry, JournalEntry, JournalEntryLine
+from .serializers import PaymentEntrySerializer, JournalEntrySerializer
 from django.db import transaction
 
 class PaymentEntryListCreateAPIView(generics.ListCreateAPIView):
@@ -229,3 +229,95 @@ class PartyOutstandingAPIView(APIView):
             'total_receivable': float(total_receivable),
             'total_payable': float(total_payable)
         })
+
+class JournalEntryViewSet(viewsets.ModelViewSet):
+    queryset = JournalEntry.objects.all().order_by('-posting_date', '-id')
+    serializer_class = JournalEntrySerializer
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        lines_data = data.get('lines', [])
+
+        if len(lines_data) < 2:
+            return Response(
+                {"error": "Journal Entry requires at least 2 line items (Debit & Credit)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        total_debit = Decimal('0.00')
+        total_credit = Decimal('0.00')
+
+        for line in lines_data:
+            total_debit += Decimal(str(line.get('debit', 0) or 0))
+            total_credit += Decimal(str(line.get('credit', 0) or 0))
+
+        if total_debit <= 0 or total_credit <= 0:
+            return Response(
+                {"error": "Total Debit and Credit must be greater than zero."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if total_debit != total_credit:
+            return Response(
+                {"error": f"Debit (₹{total_debit}) and Credit (₹{total_credit}) must be equal."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1. Create JournalEntry
+        journal_entry = JournalEntry.objects.create(
+            voucher_no=data['voucher_no'],
+            posting_date=data['posting_date'],
+            voucher_type=data.get('voucher_type', 'Journal Entry'),
+            narration=data.get('narration', ''),
+            total_amount=total_debit
+        )
+
+        # Collect account names for 'against' field in GL
+        account_names = [line['account'] for line in lines_data if line.get('account')]
+
+        # 2. Create JournalEntryLines and post to GLEntry
+        for line in lines_data:
+            debit_amt = Decimal(str(line.get('debit', 0) or 0))
+            credit_amt = Decimal(str(line.get('credit', 0) or 0))
+
+            JournalEntryLine.objects.create(
+                parent=journal_entry,
+                account=line['account'],
+                party_type=line.get('party_type') or None,
+                party_name=line.get('party_name') or None,
+                debit=debit_amt,
+                credit=credit_amt
+            )
+
+            # Against accounts (all other accounts in this entry)
+            against_accounts = [acc for acc in account_names if acc != line['account']]
+            against_str = ", ".join(against_accounts[:3])
+
+            # Post directly to General Ledger
+            GLEntry.objects.create(
+                posting_date=journal_entry.posting_date,
+                account=line['account'],
+                party_type=line.get('party_type') or None,
+                party=line.get('party_name') or None,
+                voucher_type=journal_entry.voucher_type,
+                voucher_no=journal_entry.voucher_no,
+                against=against_str,
+                debit=debit_amt,
+                credit=credit_amt,
+                remarks=journal_entry.narration or ''
+            )
+
+        serializer = self.get_serializer(journal_entry)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Delete related GL entries automatically
+        GLEntry.objects.filter(
+            voucher_type=instance.voucher_type,
+            voucher_no=instance.voucher_no
+        ).delete()
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

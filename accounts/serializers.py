@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from decimal import Decimal
 from django.db import transaction
-from .models import PaymentEntry
+from .models import PaymentEntry, JournalEntry, JournalEntryLine
 from .services import make_gl_entries
 
 
@@ -86,3 +86,15 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
 
         make_gl_entries(gl_map)
         return payment
+
+class JournalEntryLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JournalEntryLine
+        fields = ['id', 'account', 'party_type', 'party_name', 'debit', 'credit']
+
+class JournalEntrySerializer(serializers.ModelSerializer):
+    lines = JournalEntryLineSerializer(many=True)
+
+    class Meta:
+        model = JournalEntry
+        fields = ['id', 'voucher_no', 'posting_date', 'voucher_type', 'narration', 'total_amount', 'lines', 'created_at']   

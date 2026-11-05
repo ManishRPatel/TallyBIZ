@@ -16,7 +16,8 @@ import { StockLedgerTab } from './components/tabs/StockLedgerTab';
 import { AccountsTab } from './components/tabs/AccountsTab';
 import { GSTTab } from './components/tabs/GSTTab';
 import { ReportsTab } from './components/tabs/ReportsTab';
-import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements } from './types/erp';
+import { JournalEntryModal } from './components/JournalEntryModal';
+import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements, JournalEntryPayload } from './types/erp';
 import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart } from 'lucide-react';
 import { X, RefreshCw, Layers } from 'lucide-react';
 import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
@@ -55,6 +56,7 @@ export default function App() {
   const [showFinancePrintModal, setShowFinancePrintModal] = useState<boolean>(false);
   const [gstData, setGstData] = useState<any[]>([]);
   const [showGstModal, setShowGstModal] = useState<boolean>(false);
+  const [showJournalModal, setShowJournalModal] = useState<boolean>(false);
 
   // Request status
   const [loading, setLoading] = useState(false);
@@ -304,11 +306,26 @@ export default function App() {
   const sumLines = (lines: LineForm[]) =>
     lines.reduce((sum, l) => sum + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0), 0);
 
+  const handleSaveJournalEntry = async (payload: JournalEntryPayload) => {
+    const res = await fetch(`${API_BASE}/accounts/journal-entries/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to save Journal Entry');
+    }
+    void loadData(); // Ledgers અને balances તરત રીફ્રેશ થશે
+  };
+
   const handleSaveInvoice = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id, 10));
     if (!selCust) { alert('Select a customer'); return; }
     if (!validateLines(invoiceForm.lines)) return;
+
+
 
     // Stock Guard check
     for (const line of invoiceForm.lines) {
@@ -601,6 +618,7 @@ export default function App() {
             totalCredit={totalCredit}
             closingBalance={closingBalance}
             setShowLedgerPrintModal={setShowLedgerPrintModal}
+            onNewJournalEntry={() => setShowJournalModal(true)}
           />
         )}
 
@@ -663,6 +681,13 @@ export default function App() {
           onClose={() => setShowLedgerPrintModal(false)}
         />
       )}
+
+      <JournalEntryModal
+        isOpen={showJournalModal}
+        onClose={() => setShowJournalModal(false)}
+        onSave={handleSaveJournalEntry}
+        allPartyNames={allPartyNames}
+      />
 
       {/* Financial Statements Print Modal */}
       {showFinancePrintModal && finance && (

@@ -1,5 +1,6 @@
 from django.db import models
 from decimal import Decimal
+from django.core.exceptions import ValidationError
 
 class GLEntry(models.Model):
     PARTY_TYPES = (
@@ -59,4 +60,32 @@ class PaymentEntry(models.Model):
 
     def __str__(self):
         return f"{self.voucher_no} - {self.party_name} (₹{self.paid_amount})"
+
+class JournalEntry(models.Model):
+    ENTRY_TYPES = [
+        ('Journal Entry', 'Journal Entry'),
+        ('Contra Entry', 'Contra Entry'),
+        ('Expense Entry', 'Expense Entry'),
+    ]
+
+    voucher_no = models.CharField(max_length=50, unique=True)
+    posting_date = models.DateField()
+    voucher_type = models.CharField(max_length=30, choices=ENTRY_TYPES, default='Journal Entry')
+    narration = models.TextField(blank=True, null=True)
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.voucher_no} - {self.posting_date}"
+
+class JournalEntryLine(models.Model):
+    parent = models.ForeignKey(JournalEntry, on_delete=models.CASCADE, related_name='lines')
+    account = models.CharField(max_length=150)  # e.g., 'Bank Account', 'Cash', 'Office Rent'
+    party_type = models.CharField(max_length=50, blank=True, null=True)  # 'Customer' or 'Supplier'
+    party_name = models.CharField(max_length=150, blank=True, null=True)
+    debit = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    credit = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+
+    def __str__(self):
+        return f"{self.account} | Dr: {self.debit} Cr: {self.credit}"
     

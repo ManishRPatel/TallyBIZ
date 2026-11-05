@@ -7,6 +7,7 @@ from .views import (
     GSTReturnSummaryAPIView,
     DashboardSummaryAPIView,
     PartyOutstandingAPIView,
+    JournalEntryViewSet,
 )
 
 urlpatterns = [
@@ -17,4 +18,6 @@ urlpatterns = [
     path('gst-returns/', GSTReturnSummaryAPIView.as_view(), name='gst-return-summary'),
     path('dashboard-summary/', DashboardSummaryAPIView.as_view(), name='dashboard-summary'),
     path('party-outstanding/', PartyOutstandingAPIView.as_view(), name='party-outstanding'),
+    path('journal-entries/', JournalEntryViewSet.as_view({'get': 'list', 'post': 'create'}), name='journal-entry-list-create'),
+    path('journal-entries/<int:pk>/', JournalEntryViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}), name='journal-entry-detail'),
 ]
