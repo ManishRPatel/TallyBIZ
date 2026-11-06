@@ -67,6 +67,10 @@ export interface SalesInvoice {
   grand_total: number | string;
   status: string;
   items: SalesInvoiceItem[];
+  discount_percentage?: number;
+  discount_amount?: number;
+  is_foc?: boolean;
+  amount: number; // Net Taxable Amount
 }
 
 export interface PurchaseInvoiceItem {
@@ -87,6 +91,10 @@ export interface PurchaseInvoice {
   grand_total: number | string;
   status: string;
   items: PurchaseInvoiceItem[];
+  discount_percentage?: number;
+  discount_amount?: number;
+  is_foc?: boolean;
+  amount: number;
 }
 
 export interface PaymentEntry {

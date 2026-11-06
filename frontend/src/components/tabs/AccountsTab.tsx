@@ -84,6 +84,7 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             <option value="Debtors" style={{ color: '#0f172a' }}>Debtors (Customer Accounts)</option>
             <option value="Creditors" style={{ color: '#0f172a' }}>Creditors (Supplier Accounts)</option>
             <option value="Bank Account" style={{ color: '#0f172a' }}>Bank Account</option>
+            <option value="Cash Account">Cash Account</option>
             <option value="Sales Income" style={{ color: '#0f172a' }}>Sales Income</option>
             <option value="Stock Received But Not Billed" style={{ color: '#0f172a' }}>Stock Received (Purchases)</option>
             <option value="Input GST" style={{ color: '#0f172a' }}>Input GST</option>

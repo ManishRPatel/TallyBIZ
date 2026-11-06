@@ -295,8 +295,22 @@ export default function App() {
   const buildLines = (lines: LineForm[]) =>
     lines.map(l => {
       const quantity = parseFloat(l.quantity) || 0;
-      const rate = parseFloat(l.rate) || 0;
-      return { item: parseInt(l.item_id, 10), quantity, rate, amount: (quantity * rate).toFixed(2) };
+      const isFoc = Boolean(l.is_foc);
+      const rate = isFoc ? 0 : (parseFloat(l.rate) || 0);
+      const discPct = isFoc ? 0 : (parseFloat(l.discount_percentage || '0') || 0);
+      const base = quantity * rate;
+      const discAmt = (base * discPct) / 100;
+      const netAmount = Math.max(0, base - discAmt);
+
+      return {
+        item: parseInt(l.item_id, 10),
+        quantity,
+        rate,
+        discount_percentage: discPct,
+        discount_amount: parseFloat(discAmt.toFixed(2)),
+        is_foc: isFoc,
+        amount: parseFloat(netAmount.toFixed(2))
+      };
     });
 
   const validateLines = (lines: LineForm[]): boolean => {
@@ -306,7 +320,15 @@ export default function App() {
   };
 
   const sumLines = (lines: LineForm[]) =>
-    lines.reduce((sum, l) => sum + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0), 0);
+    lines.reduce((sum, l) => {
+      if (l.is_foc) return sum; // FOC હોય તો રકમ 0
+      const qty = parseFloat(l.quantity) || 0;
+      const rate = parseFloat(l.rate) || 0;
+      const base = qty * rate;
+      const discPct = parseFloat(l.discount_percentage || '0') || 0;
+      const discAmt = (base * discPct) / 100;
+      return sum + Math.max(0, base - discAmt);
+    }, 0);
 
   const handleSaveJournalEntry = async (payload: JournalEntryPayload) => {
     const res = await fetch(`${API_BASE}/accounts/journal-entries/`, {
@@ -323,42 +345,103 @@ export default function App() {
 
   const handleSaveInvoice = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const selCust = customers.find(c => c.id === parseInt(invoiceForm.customer_id, 10));
-    if (!selCust) { alert('Select a customer'); return; }
-    if (!validateLines(invoiceForm.lines)) return;
+    if (!invoiceForm.customer_id || invoiceForm.lines.length === 0) {
+      alert('Please select a customer and add at least one item.');
+      return;
+    }
 
+    // 1. એડિટ વખતે જૂના ઇન્વોઇસની ક્વોન્ટિટી મેપ કરો
+    const existingQtyMap: Record<number, number> = {};
+    if (editingId) {
+      const currentInvoice = invoices.find((inv: any) => inv.id === editingId);
+      if (currentInvoice && currentInvoice.items) {
+        for (const itm of currentInvoice.items) {
+          const itmId = typeof itm.item === 'object' ? (itm.item as any).id : itm.item;
+          existingQtyMap[itmId] = (existingQtyMap[itmId] || 0) + parseFloat(itm.quantity.toString());
+        }
+      }
+    }
 
-
-    // Stock Guard check
+    // 2. એક જ આઇટમ મલ્ટિપલ લાઇન્સમાં હોય તો સરવાળો (Aggregate) કરો
+    const requestedQtyMap: Record<number, number> = {};
     for (const line of invoiceForm.lines) {
-      const selItem = items.find(i => i.id === parseInt(line.item_id, 10));
-      const requestedQty = parseFloat(line.quantity) || 0;
-      const availableStock = selItem ? Number(selItem.current_stock) : 0;
-      if (selItem && requestedQty > availableStock) {
-        alert(`Cannot sell ${requestedQty} of ${selItem.item_name}. Only ${availableStock} in stock.`);
+      if (!line.item_id) {
+        alert('Please select an item for all line rows.');
+        return;
+      }
+      const itemId = parseInt(line.item_id, 10);
+      const qty = parseFloat(line.quantity) || 0;
+      if (qty <= 0) {
+        alert('Quantity must be greater than 0.');
+        return;
+      }
+      requestedQtyMap[itemId] = (requestedQtyMap[itemId] || 0) + qty;
+    }
+
+    // 3. ઓવરસેલ ગાર્ડ ચેક: (Available Stock + Existing Invoiced Qty)
+    for (const [itemIdStr, totalRequestedQty] of Object.entries(requestedQtyMap)) {
+      const itemId = parseInt(itemIdStr, 10);
+      const masterItem = items.find((i: any) => i.id === itemId);
+      const currentStock = masterItem ? parseFloat(masterItem.current_stock?.toString() || '0') : 0;
+      const alreadyInThisInvoice = existingQtyMap[itemId] || 0;
+      const effectiveAvailableStock = currentStock + alreadyInThisInvoice;
+
+      if (totalRequestedQty > effectiveAvailableStock) {
+        alert(
+          `Insufficient Stock for "${masterItem?.item_name || 'Item'}". ` +
+          `Available: ${effectiveAvailableStock}, Requested Total: ${totalRequestedQty}`
+        );
         return;
       }
     }
 
+    // Customer Name મેળવો
+    const selectedCustomer = customers.find((c: any) => c.id.toString() === invoiceForm.customer_id.toString());
+    const customerName = selectedCustomer ? selectedCustomer.customer_name : '';
+
     const lineItems = buildLines(invoiceForm.lines);
     const net = sumLines(invoiceForm.lines);
-    const tax = (net * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
+    const taxRate = parseFloat(invoiceForm.tax_rate) || 0;
+    const tax = (net * taxRate) / 100;
+    const grand = net + tax;
+
+    // 4. API Request
+    const payload = {
+      invoice_number: invoiceForm.invoice_number,
+      customer: parseInt(invoiceForm.customer_id, 10),
+      customer_name: customerName,
+      posting_date: invoiceForm.posting_date,
+      due_date: invoiceForm.due_date,
+      net_total: net.toFixed(2),
+      tax_amount: tax.toFixed(2),
+      grand_total: grand.toFixed(2),
+      status: invoiceForm.status || 'Submitted',
+      items: lineItems
+    };
+
     try {
-      const url = editingId ? `${API_BASE}/selling/invoices/${editingId}/` : `${API_BASE}/selling/invoices/`;
+      const url = editingId 
+        ? `${API_BASE}/selling/invoices/${editingId}/` 
+        : `${API_BASE}/selling/invoices/`;
       const method = editingId ? 'PUT' : 'POST';
+
       const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoice_number: invoiceForm.invoice_number, customer: selCust.id, customer_name: selCust.customer_name,
-          posting_date: invoiceForm.posting_date, due_date: invoiceForm.due_date, net_total: net.toFixed(2), tax_amount: tax.toFixed(2), grand_total: (net + tax).toFixed(2),
-          status: invoiceForm.status, items: lineItems
-        })
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error('Failed to save sales invoice');
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(JSON.stringify(errData));
+      }
+
       setShowInvoiceModal(false);
       setEditingId(null);
       void loadData();
-    } catch (err: unknown) { alert(getErrorMessage(err)); }
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
+    }
   };
 
   const handleSavePurchase = async (e: FormEvent<HTMLFormElement>) => {
@@ -401,12 +484,16 @@ export default function App() {
     if (!paymentForm.party_name || !amount || amount <= 0) { alert('Enter valid party and amount'); return; }
     const partyType = paymentForm.payment_type === 'Receive' ? 'Customer' : 'Supplier';
     try {
-      const res = await fetch(`${API_BASE}/accounts/payments/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const url = editingId ? `${API_BASE}/accounts/payments/${editingId}/` : `${API_BASE}/accounts/payments/`;
+      const method = editingId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method, 
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...paymentForm, party_type: partyType, paid_amount: amount.toFixed(2) })
       });
       if (!res.ok) throw new Error('Payment failed');
       setShowPaymentModal(false);
+      setEditingId(null);
       void loadData();
     } catch (err: unknown) { alert(getErrorMessage(err)); }
   };
@@ -518,6 +605,7 @@ export default function App() {
           <SellingTab
             invoices={invoices}
             filteredInvoices={filteredInvoices}
+            customers={customers}
             salesStatusMap={salesStatusMap}
             dashboardSummary={dashboardSummary}
             gstData={gstData}
@@ -578,6 +666,7 @@ export default function App() {
             setSelectedPaymentForPrint={setSelectedPaymentForPrint}
             handleDeletePayment={handleDeletePayment}
             onOpenReconciliation={() => setShowReconciliationModal(true)}
+            setEditingId={setEditingId} // <-- aa pass kari do
           />
         )}
 
@@ -1181,8 +1270,8 @@ export default function App() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '480px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, fontSize: '18px' }}>Payment Entry</h3>
-              <button onClick={() => setShowPaymentModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Payment Entry' : 'Payment Entry'}</h3>
+              <button onClick={() => { setShowPaymentModal(false); setEditingId(null); }} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -1245,8 +1334,10 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowPaymentModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Save Payment</button>
+                <button type="button" onClick={() => { setShowPaymentModal(false); setEditingId(null); }} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>
+                  {editingId ? 'Update Payment' : 'Save Payment'}
+                </button>
               </div>
             </form>
           </div>

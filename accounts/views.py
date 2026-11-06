@@ -137,32 +137,34 @@ class GeneralLedgerAPIView(APIView):
 
 class FinancialStatementsAPIView(APIView):
     def get(self, request):
-        sales_credit = GLEntry.objects.filter(account="Sales Income", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
-        sales_debit = GLEntry.objects.filter(account="Sales Income", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        sales_credit = GLEntry.objects.filter(account__icontains="Sales", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        sales_debit = GLEntry.objects.filter(account__icontains="Sales", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         net_sales = sales_credit - sales_debit
 
-        stock_in_debit = GLEntry.objects.filter(account="Stock Received But Not Billed", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
-        stock_in_credit = GLEntry.objects.filter(account="Stock Received But Not Billed", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        stock_in_debit = GLEntry.objects.filter(account__icontains="Stock Received", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        stock_in_credit = GLEntry.objects.filter(account__icontains="Stock Received", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
         total_purchases = stock_in_debit - stock_in_credit
 
-        input_gst = (GLEntry.objects.filter(account="Input GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
-                    (GLEntry.objects.filter(account="Input GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        input_gst = (GLEntry.objects.filter(account__icontains="Input GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
+                    (GLEntry.objects.filter(account__icontains="Input GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
         
-        output_gst = (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
-                     (GLEntry.objects.filter(account="Output GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
+        output_gst = (GLEntry.objects.filter(account__icontains="Output GST", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
+                     (GLEntry.objects.filter(account__icontains="Output GST", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
 
         net_gst = output_gst - input_gst
         gst_payable = max(net_gst, Decimal('0.00'))
         gst_credit = abs(net_gst) if net_gst < Decimal('0.00') else Decimal('0.00')
 
-        debtors = (GLEntry.objects.filter(account="Debtors", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
-                  (GLEntry.objects.filter(account="Debtors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        debtors = (GLEntry.objects.filter(account__icontains="Debtor", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
+                  (GLEntry.objects.filter(account__icontains="Debtor", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
 
-        creditors = (GLEntry.objects.filter(account="Creditors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
-                    (GLEntry.objects.filter(account="Creditors", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        # Creditors (Supplier Accounts) અને Creditors બંનેને પકડી લેશે:
+        creditors = (GLEntry.objects.filter(account__icontains="Creditor", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - \
+                    (GLEntry.objects.filter(account__icontains="Creditor", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
 
-        bank_balance = (GLEntry.objects.filter(account="Bank Account", is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
-                       (GLEntry.objects.filter(account="Bank Account", is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        # Bank Account, Cash Account કે Bank બધાનું ડેબિટ - ક્રેડિટ:
+        bank_balance = (GLEntry.objects.filter(account__regex=r'(?i)bank|cash', is_cancelled=False).aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
+                       (GLEntry.objects.filter(account__regex=r'(?i)bank|cash', is_cancelled=False).aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
 
         gross_profit = net_sales - total_purchases
 
@@ -192,7 +194,7 @@ class DashboardSummaryAPIView(APIView):
         total_sales = SalesInvoice.objects.filter(status='Submitted').aggregate(total=Sum('grand_total'))['total'] or 0
         total_purchases = PurchaseInvoice.objects.filter(status='Submitted').aggregate(total=Sum('grand_total'))['total'] or 0
         
-        bank_entries = GLEntry.objects.filter(account='Bank Account')
+        bank_entries = GLEntry.objects.filter(account__in=['Bank Account', 'Cash Account'])
         bank_debit = bank_entries.aggregate(total=Sum('debit'))['total'] or 0
         bank_credit = bank_entries.aggregate(total=Sum('credit'))['total'] or 0
         bank_balance = float(bank_debit) - float(bank_credit)

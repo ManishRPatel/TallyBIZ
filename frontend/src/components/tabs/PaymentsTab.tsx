@@ -1,15 +1,16 @@
 import type { FC } from 'react';
-import { Printer, Trash2 } from 'lucide-react';
+import { Printer, Trash2, Edit } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { PaymentEntry } from '../../types/erp';
 
 interface PaymentsTabProps {
   payments: PaymentEntry[];
-  setPaymentForm: any;
+  setPaymentForm: React.Dispatch<React.SetStateAction<any>>;
   setShowPaymentModal: (show: boolean) => void;
-  setSelectedPaymentForPrint: (payment: PaymentEntry | null) => void;
+  setSelectedPaymentForPrint: (payment: PaymentEntry) => void;
   handleDeletePayment: (id: number, voucherNo: string) => void;
   onOpenReconciliation: () => void;
+  setEditingId: (id: number | null) => void;
 }
 
 export const PaymentsTab: FC<PaymentsTabProps> = ({
@@ -19,6 +20,7 @@ export const PaymentsTab: FC<PaymentsTabProps> = ({
   setSelectedPaymentForPrint,
   handleDeletePayment,
   onOpenReconciliation,
+  setEditingId,
 }) => {
   return (
     <div>
@@ -74,6 +76,18 @@ export const PaymentsTab: FC<PaymentsTabProps> = ({
                   style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
                 >
                   <Printer size={12} /> Print
+                </button>
+                <button
+                  onClick={() => {
+                    if (row.id !== undefined) {
+                      setEditingId(row.id);
+                      setPaymentForm(row);
+                      setShowPaymentModal(true);
+                    }
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fef3c7', border: '1px solid #f59e0b', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}
+                >
+                  <Edit size={12} /> Edit
                 </button>
                 <button
                   onClick={() => { if (row.id !== undefined) void handleDeletePayment(row.id, row.voucher_no); }}

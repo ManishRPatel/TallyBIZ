@@ -1,22 +1,20 @@
 import React from 'react';
 
-interface MonthlyData {
-  month: string;
-  sales_net: number;
-  purchase_net: number;
-}
-
 interface MonthlyAnalyticsChartProps {
-  data: MonthlyData[];
+  data: any[];
 }
 
 export const MonthlyAnalyticsChart: React.FC<MonthlyAnalyticsChartProps> = ({ data }) => {
-  // Chronological order ma set karo (oldest to newest) jethi graph left to right barabar dekhay
-  const chartData = [...data].reverse();
+  // data (gstData) માંથી sales અને purchase વેલ્યૂઝ નોર્મલાઇઝ કરવી
+  const chartData = (data || []).map((d: any) => ({
+    month: d.month || d.month_name || 'Nov 2026',
+    sales_net: Number(d.taxable_sales ?? d.sales ?? d.sales_net ?? d.total_sales ?? 0),
+    purchase_net: Number(d.taxable_purchases ?? d.purchases ?? d.purchase_net ?? d.total_purchases ?? 0),
+  }));
 
-  // Graph ni height scale karva mate maximum amount shodhvi
+  // Graph ની height સ્કેલ કરવા માટે મહત્તમ રકમ શોધવી
   const maxVal = Math.max(
-    ...chartData.map(d => Math.max(Number(d.sales_net) || 0, Number(d.purchase_net) || 0)),
+    ...chartData.map((d: any) => Math.max(d.sales_net || 0, d.purchase_net || 0)),
     1000
   );
 
@@ -92,9 +90,9 @@ export const MonthlyAnalyticsChart: React.FC<MonthlyAnalyticsChartProps> = ({ da
 
           {/* Bar Columns Container */}
           <div style={{ display: 'flex', gap: '48px', paddingLeft: '85px', height: '100%', alignItems: 'flex-end', zIndex: 1, overflowX: 'auto', flex: 1 }}>
-            {chartData.map((d, i) => {
-              const salesH = Math.max(((Number(d.sales_net) || 0) / maxVal) * 100, 2);
-              const purH = Math.max(((Number(d.purchase_net) || 0) / maxVal) * 100, 2);
+            {chartData.map((d: any, i: number) => {
+              const salesH = Math.max(((d.sales_net || 0) / maxVal) * 100, 2);
+              const purH = Math.max(((d.purchase_net || 0) / maxVal) * 100, 2);
 
               return (
                 <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', minWidth: '95px' }}>
@@ -102,10 +100,10 @@ export const MonthlyAnalyticsChart: React.FC<MonthlyAnalyticsChartProps> = ({ da
                     {/* Sales Bar */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
                       <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}>
-                        {formatAmount(Number(d.sales_net) || 0)}
+                        {formatAmount(d.sales_net)}
                       </span>
                       <div
-                        title={`Sales: Rs. ${(Number(d.sales_net) || 0).toFixed(2)}`}
+                        title={`Sales: Rs. ${d.sales_net.toFixed(2)}`}
                         style={{
                           width: '32px',
                           height: `${salesH}%`,
@@ -119,10 +117,10 @@ export const MonthlyAnalyticsChart: React.FC<MonthlyAnalyticsChartProps> = ({ da
                     {/* Purchases Bar */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
                       <span style={{ fontSize: '10px', color: '#dc2626', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}>
-                        {formatAmount(Number(d.purchase_net) || 0)}
+                        {formatAmount(d.purchase_net)}
                       </span>
                       <div
-                        title={`Purchases: Rs. ${(Number(d.purchase_net) || 0).toFixed(2)}`}
+                        title={`Purchases: Rs. ${d.purchase_net.toFixed(2)}`}
                         style={{
                           width: '32px',
                           height: `${purH}%`,

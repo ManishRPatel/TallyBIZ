@@ -39,17 +39,27 @@ export interface LineForm {
   item_id: string;
   quantity: string;
   rate: string;
+  discount_percentage?: string;
+  is_foc?: boolean;
 }
 
 let lineCounter = 0;
 
-export const newLine = (): LineForm => ({ uid: `l${++lineCounter}`, item_id: '', quantity: '1', rate: '0' });
-
-export const lineFromItem = (item: { item: number; quantity: number | string; rate: number | string }): LineForm => ({
-  uid: `l${++lineCounter}`,
-  item_id: String(item.item),
-  quantity: String(item.quantity),
-  rate: String(item.rate)
+export const newLine = (): LineForm => ({
+  uid: Math.random().toString(36).substring(2, 9),
+  item_id: '',
+  quantity: '1',
+  rate: '0',
+  discount_percentage: '0',
+  is_foc: false,
+});
+export const lineFromItem = (item: any): LineForm => ({
+  uid: `${++lineCounter}`,
+  item_id: String(item.item || (item.item_id ? item.item_id : '')),
+  quantity: String(item.quantity || '1'),
+  rate: String(item.rate || '0'),
+  discount_percentage: String(item.discount_percentage ?? '0'),
+  is_foc: Boolean(item.is_foc),
 });
 
 export const fieldStyle: CSSProperties = {

@@ -54,6 +54,9 @@ class PurchaseInvoiceItem(models.Model):
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
     rate = models.DecimalField(max_digits=12, decimal_places=2)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    is_foc = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.item.item_name} ({self.quantity})"

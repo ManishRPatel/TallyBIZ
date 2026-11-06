@@ -2,7 +2,7 @@ import type { FC } from 'react';
 import { Plus, Download, Search, Printer, Edit2, Trash2 } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import { MonthlyAnalyticsChart } from '../MonthlyAnalyticsChart';
-import type { SalesInvoice } from '../../types/erp';
+import type { SalesInvoice, Customer } from '../../types/erp';
 import {
   getDueStatus,
   getNextInvoiceNumber,
@@ -16,6 +16,7 @@ import {
 interface SellingTabProps {
   invoices: SalesInvoice[];
   filteredInvoices: SalesInvoice[];
+  customers: Customer[]; // <-- Added
   salesStatusMap: Record<number, { status: 'Paid' | 'Partially Paid' | 'Unpaid'; paid: number; balance: number }>;
   dashboardSummary: DashboardSummary;
   gstData: any[];
@@ -31,6 +32,7 @@ interface SellingTabProps {
 export const SellingTab: FC<SellingTabProps> = ({
   invoices,
   filteredInvoices,
+  customers, // <-- Added
   salesStatusMap,
   dashboardSummary,
   gstData,
@@ -237,9 +239,14 @@ export const SellingTab: FC<SellingTabProps> = ({
                 <button
                   onClick={() => {
                     setEditingId(row.id || null);
+                    const matchedCustomer = (customers || []).find(
+                      (c: any) => c.id === row.customer || c.customer_name === row.customer_name
+                    );
+                    const selectedCustId = matchedCustomer ? String(matchedCustomer.id) : (row.customer ? String(row.customer) : '');
+
                     setInvoiceForm({
                       invoice_number: row.invoice_number,
-                      customer_id: row.customer ? row.customer.toString() : '',
+                      customer_id: selectedCustId,
                       posting_date: row.posting_date,
                       due_date: (row as any).due_date || row.posting_date,
                       tax_rate: inferTaxRate(row.net_total, row.tax_amount),
@@ -267,4 +274,4 @@ export const SellingTab: FC<SellingTabProps> = ({
       />
     </div>
   );
-}; 
+};

@@ -41,7 +41,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
       margin: [10, 10, 10, 10],
       filename: `${invoice.invoice_number}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
 
@@ -53,8 +53,18 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   const grandTotal = parseFloat(invoice.grand_total.toString()) || 0;
   const halfTax = taxTotal / 2;
 
+  // Round Off / Adjustment: જો મોડેલમાં round_off હોય તો તે, નહીં તો Grand Total - (Net + Tax)
+  const roundOff = (invoice as any).round_off !== undefined && (invoice as any).round_off !== null
+    ? parseFloat((invoice as any).round_off.toString()) || 0
+    : parseFloat((grandTotal - (netTotal + taxTotal)).toFixed(2));
+
   // Inter-State Check: જો GSTIN 24 સિવાયના રાજ્યનો હોય તો IGST ગણાય
   const isInterState = customer?.gstin && !customer.gstin.startsWith('24');
+
+  // Customer Category Logic: જો અન-રજિસ્ટર્ડ હોય તો સાચું લેબલ બતાવવું
+  const customerGstCategory = customer?.gst_category 
+    ? customer.gst_category 
+    : (customer?.gstin && customer.gstin.trim() !== '' ? 'Registered Regular' : 'Unregistered');
 
   return (
     <div
@@ -73,12 +83,20 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 12mm;
+          margin: 10mm; /* Browser default headers & footers will be removed */
         }
         @media print {
-          body {
-            visibility: hidden !important;
+          html, body {
+            width: 100% !important;
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
             background: #fff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          body * {
+            visibility: hidden !important;
           }
           .no-print {
             display: none !important;
@@ -87,7 +105,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             visibility: visible !important;
           }
           #printable-invoice {
-            position: fixed !important;
+            position: absolute !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
@@ -228,7 +246,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
               {customer?.address && <>{customer.address}<br /></>}
               {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}<br />
-              <strong>GSTIN:</strong> {customer?.gstin || 'Unregistered'} | <strong>Category:</strong> {customer?.gst_category || 'Regular'}
+              <strong>GSTIN:</strong> {customer?.gstin || 'Unregistered'} | <strong>Category:</strong> {customerGstCategory}
             </p>
           </div>
 
@@ -296,6 +314,15 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 <span>Total GST (18.00%):</span>
                 <span>Rs. {taxTotal.toFixed(2)}</span>
               </div>
+
+              {/* Round Off / Adjustment row */}
+              {Math.abs(roundOff) > 0.001 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', fontSize: '12px' }}>
+                  <span>Round Off / Adjustment:</span>
+                  <span>{roundOff > 0 ? `+Rs. ${roundOff.toFixed(2)}` : `-Rs. ${Math.abs(roundOff).toFixed(2)}`}</span>
+                </div>
+              )}
+
               <hr style={{ border: 'none', borderTop: '2px solid #0284c7', margin: '4px 0' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
                 <span>Grand Total:</span>

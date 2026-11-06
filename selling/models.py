@@ -48,12 +48,33 @@ class SalesInvoice(models.Model):
         return f"{self.invoice_number} - {self.customer_name}"
 
 
-class SalesInvoiceItem(models.Model):
-    invoice = models.ForeignKey(SalesInvoice, on_delete=models.CASCADE, related_name='items')
-    item = models.ForeignKey(Item, on_delete=models.PROTECT)
-    quantity = models.DecimalField(max_digits=12, decimal_places=2)
-    rate = models.DecimalField(max_digits=12, decimal_places=2)
-    amount = models.DecimalField(max_digits=14, decimal_places=2)
+# TallyBIZ/selling/models.py
 
-    def __str__(self):
-        return f"{self.item.item_name} ({self.quantity})"
+class SalesInvoiceItem(models.Model):
+    invoice = models.ForeignKey(SalesInvoice, related_name='items', on_delete=models.CASCADE)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    description = models.CharField(max_length=255, blank=True)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=1.0)
+    rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    
+    # --- New Fields ---
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    is_foc = models.BooleanField(default=False)  # Free of Cost (Sample)
+    
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.0) # Taxable value
+
+    def save(self, *args, **kwargs):
+        if self.is_foc:
+            self.rate = 0.0
+            self.discount_percentage = 0.0
+            self.discount_amount = 0.0
+            self.amount = 0.0
+        else:
+            base_amt = float(self.quantity) * float(self.rate)
+            if float(self.discount_percentage) > 0:
+                disc = base_amt * (float(self.discount_percentage) / 100.0)
+                self.discount_amount = disc
+            self.amount = max(0.0, base_amt - float(self.discount_amount))
+            
+        super().save(*args, **kwargs)

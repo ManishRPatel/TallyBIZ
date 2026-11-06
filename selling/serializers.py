@@ -1,6 +1,6 @@
 from rest_framework import serializers
-from django.db import transaction
 from decimal import Decimal
+from django.db import transaction
 from .models import Customer, SalesInvoice, SalesInvoiceItem
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry
@@ -14,9 +14,14 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class SalesInvoiceItemSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    discount_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, default=0.0)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0.0)
+    is_foc = serializers.BooleanField(required=False, default=False)
+
     class Meta:
         model = SalesInvoiceItem
-        fields = ['id', 'item', 'quantity', 'rate', 'amount']
+        fields = ['id', 'item', 'quantity', 'rate', 'discount_percentage', 'discount_amount', 'is_foc', 'amount']
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -24,74 +29,180 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = [
-            'id', 
-            'invoice_number', 
-            'customer', 
-            'customer_name', 
-            'posting_date', 
-            'due_date', 
-            'net_total', 
-            'tax_amount', 
-            'grand_total', 
-            'status', 
-            'items'
-        ]
+        fields = '__all__'
 
     def validate(self, data):
-        items_data = data.get('items')
-
-        # Defect #2 Fix: Items hova farajiyat chhe
-        if self.instance is None and (not items_data or len(items_data) == 0):
+        items_data = data.get('items', [])
+        if not items_data:
             raise serializers.ValidationError({"items": "At least one item is required."})
 
-        if items_data:
-            # Defect #6 Fix: Stock negative na thavo joiye
-            for row in items_data:
-                item_obj = row['item']
-                qty = Decimal(str(row['quantity']))
-                if qty <= Decimal('0.00'):
-                    raise serializers.ValidationError({"items": "Quantity must be greater than zero."})
+        # 1. એક જ આઇટમ મલ્ટિપલ લાઇનમાં હોય તો એકત્રિત (aggregate) કરો
+        req_totals = {}
+        for row in items_data:
+            item_obj = row['item']
+            qty = Decimal(str(row['quantity']))
+            if qty <= Decimal('0'):
+                raise serializers.ValidationError({"items": "Quantity must be greater than zero."})
+            req_totals[item_obj.id] = req_totals.get(item_obj.id, Decimal('0')) + qty
 
-                available = item_obj.current_stock
-                if self.instance:
-                    old_item = self.instance.items.filter(item=item_obj).first()
-                    if old_item:
-                        available += old_item.quantity
+        # 2. જો અપડેટ હોય તો વર્તમાન ઇન્વોઇસમાં પહેલેથી બાદ થયેલો સ્ટોક ઉમેરો
+        existing_qty = {}
+        if self.instance:
+            for old_row in self.instance.items.all():
+                existing_qty[old_row.item_id] = existing_qty.get(old_row.item_id, Decimal('0')) + old_row.quantity
 
-                if qty > available:
-                    raise serializers.ValidationError({
-                        "items": f"Insufficient stock for '{item_obj.item_name}'. Available: {available}, Requested: {qty}."
-                    })
-
-            # Defect #4 Fix: Net total ane Grand total nu calculation backend par check karo (400 validation error)
-            calc_net = sum(Decimal(str(r['quantity'])) * Decimal(str(r['rate'])) for r in items_data)
-            tax_amt = Decimal(str(data.get('tax_amount', 0)))
-            calc_grand = calc_net + tax_amt
-            
-            data['net_total'] = calc_net
-            data['grand_total'] = calc_grand
+        # 3. ડેટાબેઝમાંથી ફ્રેશ સ્ટોક ચેક કરો
+        for item_id, total_req in req_totals.items():
+            fresh_item = Item.objects.get(id=item_id)
+            available = fresh_item.current_stock + existing_qty.get(item_id, Decimal('0'))
+            if total_req > available:
+                raise serializers.ValidationError({
+                    "items": f"Insufficient stock for '{fresh_item.item_name}'. Available: {available}, Requested: {total_req}"
+                })
 
         return data
 
-    def _post_stock_and_gl(self, invoice, items_data):
+    @transaction.atomic
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        
+        # ફ્રન્ટએન્ડમાંથી આવેલા ટોટલ કાઢીને અહીં ફરીથી સચોટ ગણતરી કરવી
+        validated_data.pop('net_total', None)
+        validated_data.pop('tax_amount', None)
+        validated_data.pop('grand_total', None)
+
+        net_total = Decimal('0.00')
+        for item in items_data:
+            qty = Decimal(str(item.get('quantity', 0)))
+            is_foc = item.get('is_foc', False)
+            
+            if is_foc:
+                item['rate'] = Decimal('0.00')
+                item['discount_percentage'] = Decimal('0.00')
+                item['discount_amount'] = Decimal('0.00')
+                item['amount'] = Decimal('0.00')
+            else:
+                rate = Decimal(str(item.get('rate', 0)))
+                disc_pct = Decimal(str(item.get('discount_percentage', 0)))
+                base_amt = qty * rate
+                disc_amt = (base_amt * (disc_pct / Decimal('100'))).quantize(Decimal('0.01'))
+                taxable_amt = max(Decimal('0.00'), base_amt - disc_amt)
+
+                item['discount_amount'] = disc_amt
+                item['amount'] = taxable_amt
+                net_total += taxable_amt
+
+        tax_rate = Decimal(str(validated_data.get('tax_rate', '18'))) / Decimal('100')
+        tax_amount = (net_total * tax_rate).quantize(Decimal('0.01'))
+        grand_total = net_total + tax_amount
+
+        invoice = SalesInvoice.objects.create(
+            net_total=net_total,
+            tax_amount=tax_amount,
+            grand_total=grand_total,
+            status=validated_data.pop('status', 'Submitted'),
+            **validated_data
+        )
+
         for item_data in items_data:
             SalesInvoiceItem.objects.create(invoice=invoice, **item_data)
-            item_obj = item_data['item']
-            qty = Decimal(str(item_data['quantity']))
-            new_stock = item_obj.current_stock - qty
-            item_obj.current_stock = new_stock
+            
+            # Stock Deduction & Ledger Entry with lock
+            item_obj = Item.objects.select_for_update().get(id=item_data['item'].id)
+            item_obj.current_stock -= item_data['quantity']
             item_obj.save()
 
             StockLedgerEntry.objects.create(
                 posting_date=invoice.posting_date,
                 item=item_obj,
-                voucher_type='Sales Invoice',
+                voucher_type="Sales Invoice",
                 voucher_no=invoice.invoice_number,
-                actual_qty=-qty,
-                qty_after_transaction=new_stock,
-                valuation_rate=item_data['rate']
+                actual_qty=-Decimal(str(item_data['quantity'])),
+                qty_after_transaction=item_obj.current_stock
             )
+
+        self._post_gl(invoice)
+        return invoice
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items', None)
+
+        validated_data.pop('net_total', None)
+        validated_data.pop('tax_amount', None)
+        validated_data.pop('grand_total', None)
+
+        # 1. જૂનો સ્ટોક અને જૂની એન્ટ્રીઓ રિવર્સ કરો
+        for old_row in instance.items.all():
+            itm = Item.objects.select_for_update().get(id=old_row.item_id)
+            itm.current_stock += old_row.quantity
+            itm.save()
+
+        StockLedgerEntry.objects.filter(
+            voucher_type="Sales Invoice", voucher_no=instance.invoice_number
+        ).delete()
+        GLEntry.objects.filter(
+            voucher_type="Sales Invoice", voucher_no=instance.invoice_number
+        ).delete()
+        instance.items.all().delete()
+
+        # 2. નવા ડેટા સાથે ફિલ્ડ્સ અપડેટ કરો
+        for attr, val in validated_data.items():
+            setattr(instance, attr, val)
+
+        net_total = Decimal('0.00')
+        if items_data:
+            for item in items_data:
+                qty = Decimal(str(item.get('quantity', 0)))
+                is_foc = item.get('is_foc', False)
+
+                if is_foc:
+                    item['rate'] = Decimal('0.00')
+                    item['discount_percentage'] = Decimal('0.00')
+                    item['discount_amount'] = Decimal('0.00')
+                    item['amount'] = Decimal('0.00')
+                else:
+                    rate = Decimal(str(item.get('rate', 0)))
+                    disc_pct = Decimal(str(item.get('discount_percentage', 0)))
+                    base_amt = qty * rate
+                    disc_amt = (base_amt * (disc_pct / Decimal('100'))).quantize(Decimal('0.01'))
+                    taxable_amt = max(Decimal('0.00'), base_amt - disc_amt)
+
+                    item['discount_amount'] = disc_amt
+                    item['amount'] = taxable_amt
+                    net_total += taxable_amt
+
+                SalesInvoiceItem.objects.create(invoice=instance, **item)
+
+                itm = Item.objects.select_for_update().get(id=item['item'].id)
+                itm.current_stock -= item['quantity']
+                itm.save()
+
+                StockLedgerEntry.objects.create(
+                    posting_date=instance.posting_date,
+                    item=itm,
+                    voucher_type="Sales Invoice",
+                    voucher_no=instance.invoice_number,
+                    actual_qty=-Decimal(str(item['quantity'])),
+                    qty_after_transaction=itm.current_stock
+                )
+
+        tax_rate = Decimal(str(instance.tax_rate if hasattr(instance, 'tax_rate') and instance.tax_rate else '18')) / Decimal('100')
+        instance.net_total = net_total
+        instance.tax_amount = (net_total * tax_rate).quantize(Decimal('0.01'))
+        instance.grand_total = instance.net_total + instance.tax_amount
+        instance.save()
+
+        self._post_gl(instance)
+        return instance
+
+    def _post_gl(self, invoice):
+        is_inter_state = False
+        if hasattr(invoice, 'customer') and invoice.customer and invoice.customer.gstin:
+            if not invoice.customer.gstin.startswith('24'):
+                is_inter_state = True
+
+        half_tax = (invoice.tax_amount / Decimal('2')).quantize(Decimal('0.01'))
 
         gl_map = [
             {
@@ -104,7 +215,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 "against": "Sales Income",
                 "debit": invoice.grand_total,
                 "credit": Decimal('0.00'),
-                "remarks": f"Sales Invoice {invoice.invoice_number}"
+                "remarks": f"Sales to {invoice.customer_name}"
             },
             {
                 "posting_date": invoice.posting_date,
@@ -116,11 +227,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 "against": invoice.customer_name,
                 "debit": Decimal('0.00'),
                 "credit": invoice.net_total,
-                "remarks": f"Sales Income for {invoice.invoice_number}"
+                "remarks": "Goods Sold"
             }
         ]
 
-        if invoice.tax_amount and invoice.tax_amount > Decimal('0.00'):
+        if is_inter_state:
             gl_map.append({
                 "posting_date": invoice.posting_date,
                 "account": "Output GST",
@@ -131,41 +242,34 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 "against": invoice.customer_name,
                 "debit": Decimal('0.00'),
                 "credit": invoice.tax_amount,
-                "remarks": f"Output GST on {invoice.invoice_number}"
+                "remarks": "IGST Output 18%"
             })
+        else:
+            gl_map.extend([
+                {
+                    "posting_date": invoice.posting_date,
+                    "account": "Output GST",
+                    "party_type": None,
+                    "party": None,
+                    "voucher_type": "Sales Invoice",
+                    "voucher_no": invoice.invoice_number,
+                    "against": invoice.customer_name,
+                    "debit": Decimal('0.00'),
+                    "credit": half_tax,
+                    "remarks": "CGST Output 9%"
+                },
+                {
+                    "posting_date": invoice.posting_date,
+                    "account": "Output GST",
+                    "party_type": None,
+                    "party": None,
+                    "voucher_type": "Sales Invoice",
+                    "voucher_no": invoice.invoice_number,
+                    "against": invoice.customer_name,
+                    "debit": Decimal('0.00'),
+                    "credit": half_tax,
+                    "remarks": "SGST Output 9%"
+                }
+            ])
 
         make_gl_entries(gl_map)
-
-    @transaction.atomic
-    def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        invoice = SalesInvoice.objects.create(**validated_data)
-        self._post_stock_and_gl(invoice, items_data)
-        return invoice
-
-    @transaction.atomic
-    def update(self, instance, validated_data):
-        items_data = validated_data.pop('items', None)
-
-        # Jo items na moklya hoy to update atkavi do (Defect #2 Fix)
-        if items_data is None:
-            raise serializers.ValidationError({"items": "Items list is required for invoice update."})
-
-        # 1. Juno stock pacho vadharo
-        for old_item in instance.items.all():
-            item_obj = old_item.item
-            item_obj.current_stock += old_item.quantity
-            item_obj.save()
-
-        StockLedgerEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=instance.invoice_number).delete()
-        GLEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=instance.invoice_number).delete()
-        instance.items.all().delete()
-
-        # 2. Navi details save karo
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-
-        # 3. Navo stock ane ledger banavo
-        self._post_stock_and_gl(instance, items_data)
-        return instance

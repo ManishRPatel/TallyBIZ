@@ -79,8 +79,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 voucher_type='Purchase Invoice',
                 voucher_no=invoice.bill_number,
                 actual_qty=qty,
-                qty_after_transaction=new_stock,
-                valuation_rate=item_data['rate']
+                qty_after_transaction=new_stock
             )
 
         gl_map = [

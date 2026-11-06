@@ -7,13 +7,14 @@ interface GSTDataRow {
   month: string;
   sales: number;
   purchases: number;
-  output_gst: number;
-  input_gst: number;
-  net_gst: number;
+  output_tax: number;
+  input_itc: number;
+  net_gst_payable: number;
+  [key: string]: any;
 }
 
 interface GSTTabProps {
-  gstData: GSTDataRow[];
+  gstData: GSTDataRow [];
   setShowGSTPrintModal: (show: boolean) => void;
 }
 
@@ -21,8 +22,8 @@ export const GSTTab: FC<GSTTabProps> = ({
   gstData,
   setShowGSTPrintModal,
 }) => {
-  const totalOutput = gstData.reduce((sum, d) => sum + (d.output_gst || 0), 0);
-  const totalInput = gstData.reduce((sum, d) => sum + (d.input_gst || 0), 0);
+  const totalOutput = gstData.reduce((sum, d: any) => sum + (Number(d.output_gst || d.output_tax) || 0), 0);
+  const totalInput = gstData.reduce((sum, d: any) => sum + (Number(d.input_gst || d.input_itc) || 0), 0);
   const netPayable = totalOutput - totalInput;
 
   return (
