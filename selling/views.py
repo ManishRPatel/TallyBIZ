@@ -1,8 +1,8 @@
 from rest_framework import generics
 from django.db import transaction
 from decimal import Decimal
-from .models import Customer, SalesInvoice
-from .serializers import CustomerSerializer, SalesInvoiceSerializer
+from .models import Customer, SalesInvoice, CreditNote
+from .serializers import CustomerSerializer, SalesInvoiceSerializer, CreditNoteSerializer
 from stock.models import StockLedgerEntry
 from accounts.models import GLEntry, PaymentInvoiceAllocation
 from django.db.models import Sum
@@ -14,6 +14,10 @@ class CustomerListCreateAPIView(generics.ListCreateAPIView):
 class CustomerRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+
+class CreditNoteListCreateAPIView(generics.ListCreateAPIView):
+    queryset = CreditNote.objects.all().order_by('-id')
+    serializer_class = CreditNoteSerializer    
 
 class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
     queryset = SalesInvoice.objects.all().order_by('-posting_date', '-invoice_number')

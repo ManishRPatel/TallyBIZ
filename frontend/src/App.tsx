@@ -25,7 +25,7 @@ import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelper
 import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, type DashboardSummary, type LineForm } from './utils/erpHelpers';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'reports' | 'gst'>('selling');
+  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' |  'ReturnsTab'  | 'reports' | 'gst'>('selling');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Data states
@@ -555,6 +555,9 @@ export default function App() {
           </button>
           <button onClick={() => setActiveTab('payments')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'payments' ? '#1e293b' : 'transparent', color: activeTab === 'payments' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <CreditCard size={18} /> Payments
+          </button>
+          <button onClick={() => setActiveTab('ReturnsTab')}>
+            <CreditCard size={18} /> Credit & Debit Notes
           </button>
           <button onClick={() => setActiveTab('stock')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock' ? '#1e293b' : 'transparent', color: activeTab === 'stock' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <Package size={18} /> Stock (Items)

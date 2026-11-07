@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import transaction
 from decimal import Decimal
-from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem
+from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem, DebitNote, DebitNoteItem
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry
 from accounts.services import make_gl_entries
@@ -182,3 +182,88 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         # 3. નવો સ્ટોક અને નવું લેજર બનાવો
         self._post_stock_and_gl(instance, items_data)
         return instance
+
+class DebitNoteItemSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+
+    class Meta:
+        model = DebitNoteItem
+        fields = ['id', 'item', 'quantity', 'rate', 'amount']
+
+
+class DebitNoteSerializer(serializers.ModelSerializer):
+    items = DebitNoteItemSerializer(many=True)
+
+    class Meta:
+        model = DebitNote
+        fields = '__all__'
+
+    @transaction.atomic
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        
+        net_total = Decimal('0.00')
+        for item in items_data:
+            line_amt = Decimal(str(item['quantity'])) * Decimal(str(item['rate']))
+            item['amount'] = line_amt
+            net_total += line_amt
+
+        tax_amount = (net_total * Decimal('0.18')).quantize(Decimal('0.01'))
+        grand_total = net_total + tax_amount
+
+        debit_note = DebitNote.objects.create(
+            net_total=net_total,
+            tax_amount=tax_amount,
+            grand_total=grand_total,
+            status='Submitted',
+            **validated_data
+        )
+
+        for item_data in items_data:
+            DebitNoteItem.objects.create(debit_note=debit_note, **item_data)
+            
+            # Stock Outward (Purchase Return માઇનસ થશે) સાથે લોક
+            item_obj = Item.objects.select_for_update().get(id=item_data['item'].id)
+            item_obj.current_stock -= item_data['quantity']
+            item_obj.save()
+
+            StockLedgerEntry.objects.create(
+                posting_date=debit_note.posting_date,
+                item=item_obj,
+                voucher_type="Debit Note",
+                voucher_no=debit_note.debit_note_number,
+                actual_qty=-Decimal(str(item_data['quantity'])),  # માઇનસ (-) કવોન્ટિટી
+                qty_after_transaction=item_obj.current_stock,
+                valuation_rate=item_obj.standard_rate
+            )
+
+        # GL Entries for Debit Note (Creditors & Purchase Return)
+        gl_map = [
+            {
+                "posting_date": debit_note.posting_date,
+                "account": "Creditors",
+                "party_type": "Supplier",
+                "party": debit_note.supplier_name,
+                "voucher_type": "Debit Note",
+                "voucher_no": debit_note.debit_note_number,
+                "against": "Purchase Return",
+                "debit": debit_note.grand_total,
+                "credit": Decimal('0.00'),
+                "remarks": f"Debit note reduction for {debit_note.debit_note_number}"
+            },
+            {
+                "posting_date": debit_note.posting_date,
+                "account": "Stock Received But Not Billed",  # Purchase Return account તરીકે
+                "party_type": None,
+                "party": None,
+                "voucher_type": "Debit Note",
+                "voucher_no": debit_note.debit_note_number,
+                "against": debit_note.supplier_name,
+                "debit": Decimal('0.00'),
+                "credit": debit_note.net_total,
+                "remarks": f"Purchase Return to {debit_note.supplier_name}"
+            }
+        ]
+        make_gl_entries(gl_map)
+        return debit_note
+    

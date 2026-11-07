@@ -2,8 +2,8 @@ from rest_framework import generics
 from django.db import transaction
 from decimal import Decimal
 from django.db.models import Sum
-from .models import Supplier, PurchaseInvoice
-from .serializers import SupplierSerializer, PurchaseInvoiceSerializer
+from .models import Supplier, PurchaseInvoice, DebitNote
+from .serializers import SupplierSerializer, PurchaseInvoiceSerializer, DebitNoteSerializer
 from stock.models import StockLedgerEntry
 from accounts.models import GLEntry, PaymentInvoiceAllocation
 
@@ -18,6 +18,9 @@ class SupplierRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
 
+class DebitNoteListCreateAPIView(generics.ListCreateAPIView):
+    queryset = DebitNote.objects.all().order_by('-id')
+    serializer_class = DebitNoteSerializer
 
 # --- PURCHASE INVOICE VIEWS ---
 class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):

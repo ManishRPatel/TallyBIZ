@@ -60,3 +60,32 @@ class PurchaseInvoiceItem(models.Model):
 
     def __str__(self):
         return f"{self.item.item_name} ({self.quantity})"
+
+class DebitNote(models.Model):
+    debit_note_number = models.CharField(max_length=100, unique=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True)
+    supplier_name = models.CharField(max_length=200)
+    purchase_invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.SET_NULL, null=True, blank=True, related_name='debit_notes')
+    posting_date = models.DateField()
+    
+    net_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    grand_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    
+    reason = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=50, default='Submitted')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"DN #{self.debit_note_number} - {self.supplier_name}"
+
+
+class DebitNoteItem(models.Model):
+    debit_note = models.ForeignKey(DebitNote, on_delete=models.CASCADE, related_name='items')
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    rate = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.item.item_name} ({self.quantity})"

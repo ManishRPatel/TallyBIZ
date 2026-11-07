@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from decimal import Decimal
 from django.db import transaction
-from .models import Customer, SalesInvoice, SalesInvoiceItem
+from .models import Customer, SalesInvoice, SalesInvoiceItem, CreditNote, CreditNoteItem
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry
 from accounts.services import make_gl_entries
@@ -279,3 +279,87 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             ])
 
         make_gl_entries(gl_map)
+
+class CreditNoteItemSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+
+    class Meta:
+        model = CreditNoteItem
+        fields = ['id', 'item', 'quantity', 'rate', 'amount']
+
+
+class CreditNoteSerializer(serializers.ModelSerializer):
+    items = CreditNoteItemSerializer(many=True)
+
+    class Meta:
+        model = CreditNote
+        fields = '__all__'
+
+    @transaction.atomic
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        
+        net_total = Decimal('0.00')
+        for item in items_data:
+            line_amt = Decimal(str(item['quantity'])) * Decimal(str(item['rate']))
+            item['amount'] = line_amt
+            net_total += line_amt
+
+        tax_amount = (net_total * Decimal('0.18')).quantize(Decimal('0.01'))
+        grand_total = net_total + tax_amount
+
+        credit_note = CreditNote.objects.create(
+            net_total=net_total,
+            tax_amount=tax_amount,
+            grand_total=grand_total,
+            status='Submitted',
+            **validated_data
+        )
+
+        for item_data in items_data:
+            CreditNoteItem.objects.create(credit_note=credit_note, **item_data)
+            
+            # Stock Inward (Sales Return વતા થશે) સાથે લોક
+            item_obj = Item.objects.select_for_update().get(id=item_data['item'].id)
+            item_obj.current_stock += item_data['quantity']
+            item_obj.save()
+
+            StockLedgerEntry.objects.create(
+                posting_date=credit_note.posting_date,
+                item=item_obj,
+                voucher_type="Credit Note",
+                voucher_no=credit_note.credit_note_number,
+                actual_qty=Decimal(str(item_data['quantity'])),  # વતા (+) કવોન્ટિટી
+                qty_after_transaction=item_obj.current_stock,
+                valuation_rate=item_obj.standard_rate
+            )
+
+        # GL Entries for Credit Note (Sales Return & Debtors)
+        gl_map = [
+            {
+                "posting_date": credit_note.posting_date,
+                "account": "Sales Income",  # Sales Return account તરીકે
+                "party_type": None,
+                "party": None,
+                "voucher_type": "Credit Note",
+                "voucher_no": credit_note.credit_note_number,
+                "against": credit_note.customer_name,
+                "debit": credit_note.net_total,
+                "credit": Decimal('0.00'),
+                "remarks": f"Sales Return from {credit_note.customer_name}"
+            },
+            {
+                "posting_date": credit_note.posting_date,
+                "account": "Debtors",
+                "party_type": "Customer",
+                "party": credit_note.customer_name,
+                "voucher_type": "Credit Note",
+                "voucher_no": credit_note.credit_note_number,
+                "against": "Sales Income",
+                "debit": Decimal('0.00'),
+                "credit": credit_note.grand_total,
+                "remarks": f"Credit note reduction for {credit_note.credit_note_number}"
+            }
+        ]
+        make_gl_entries(gl_map)
+        return credit_note
