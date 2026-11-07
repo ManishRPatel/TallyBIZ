@@ -112,13 +112,16 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             item_obj.current_stock -= item_data['quantity']
             item_obj.save()
 
+            val_rate = item_obj.standard_rate if item_obj.standard_rate > Decimal('0.00') else Decimal(str(item_data.get('rate', 0)))
+
             StockLedgerEntry.objects.create(
                 posting_date=invoice.posting_date,
                 item=item_obj,
                 voucher_type="Sales Invoice",
                 voucher_no=invoice.invoice_number,
                 actual_qty=-Decimal(str(item_data['quantity'])),
-                qty_after_transaction=item_obj.current_stock
+                qty_after_transaction=item_obj.current_stock,
+                valuation_rate=val_rate
             )
 
         self._post_gl(invoice)
@@ -178,13 +181,16 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 itm.current_stock -= item['quantity']
                 itm.save()
 
+                val_rate = itm.standard_rate if itm.standard_rate > Decimal('0.00') else Decimal(str(item.get('rate', 0)))
+
                 StockLedgerEntry.objects.create(
                     posting_date=instance.posting_date,
                     item=itm,
                     voucher_type="Sales Invoice",
                     voucher_no=instance.invoice_number,
                     actual_qty=-Decimal(str(item['quantity'])),
-                    qty_after_transaction=itm.current_stock
+                    qty_after_transaction=itm.current_stock,
+                    valuation_rate=val_rate
                 )
 
         tax_rate = Decimal(str(instance.tax_rate if hasattr(instance, 'tax_rate') and instance.tax_rate else '18')) / Decimal('100')

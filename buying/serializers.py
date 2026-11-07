@@ -73,13 +73,17 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             item_obj.current_stock = new_stock
             item_obj.save()
 
+            rate = Decimal(str(item_data.get('rate', 0)))
+            val_rate = rate if rate > Decimal('0.00') else item_obj.standard_rate
+
             StockLedgerEntry.objects.create(
                 posting_date=invoice.posting_date,
                 item=item_obj,
                 voucher_type='Purchase Invoice',
                 voucher_no=invoice.bill_number,
                 actual_qty=qty,
-                qty_after_transaction=new_stock
+                qty_after_transaction=new_stock,
+                valuation_rate=val_rate
             )
 
         gl_map = [

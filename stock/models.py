@@ -16,16 +16,14 @@ class Item(models.Model):
 
 class StockLedgerEntry(models.Model):
     posting_date = models.DateField()
-    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='stock_entries')
-    voucher_type = models.CharField(max_length=100)  # 'Purchase Bill', 'Sales Invoice', 'Stock Adjustment'
-    voucher_no = models.CharField(max_length=100)
-    
-    # Qty: પર્ચેસ વખતે પ્લસ (+), સેલ્સ વખતે માઇનસ (-)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    voucher_type = models.CharField(max_length=50)
+    voucher_no = models.CharField(max_length=50)
     actual_qty = models.DecimalField(max_digits=12, decimal_places=2)
     qty_after_transaction = models.DecimalField(max_digits=12, decimal_places=2)
-    
-    valuation_rate = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
-    created_at = models.DateTimeField(auto_now_add=True)
+    incoming_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    valuation_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    stock_value = models.DecimalField(max_digits=14, decimal_places=2, default=0.0)
 
     class Meta:
         indexes = [

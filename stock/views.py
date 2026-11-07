@@ -30,11 +30,12 @@ class StockLedgerAPIView(APIView):
         if item_id and item_id != 'all':
             filters['item_id'] = item_id
 
-        # કાલક્રમિક (Chronological) સાચો ક્રમ: સૌથી જૂની એન્ટ્રી પહેલી જેથી બેલેન્સ સાચું વધે/ઘટે
+        # કાલક્રમિક (Chronological) સાચો ક્રમ
         entries = StockLedgerEntry.objects.filter(**filters).select_related('item').order_by('posting_date', '-actual_qty', 'id')
 
         report = []
         running_balances = {}
+        last_known_rates = {}
 
         for row in entries:
             it_id = row.item_id
@@ -44,8 +45,18 @@ class StockLedgerAPIView(APIView):
             running_balances[it_id] += row.actual_qty
 
             qty = row.actual_qty
-            in_qty = qty if qty > 0 else Decimal('0.00')
-            out_qty = abs(qty) if qty < 0 else Decimal('0.00')
+            in_qty = qty if qty > Decimal('0.00') else Decimal('0.00')
+            out_qty = abs(qty) if qty < Decimal('0.00') else Decimal('0.00')
+
+            # Valuation rate logic: જો 0 હોય તો પાછલો રેટ અથવા standard_rate લેવો
+            rate = row.valuation_rate
+            if rate <= Decimal('0.00'):
+                rate = last_known_rates.get(it_id, row.item.standard_rate or Decimal('0.00'))
+            else:
+                last_known_rates[it_id] = rate
+
+            bal_qty = running_balances[it_id]
+            bal_value = bal_qty * rate
 
             report.append({
                 'id': row.id,
@@ -56,11 +67,11 @@ class StockLedgerAPIView(APIView):
                 'voucher_no': row.voucher_no,
                 'in_qty': float(in_qty),
                 'out_qty': float(out_qty),
-                'balance_qty': float(running_balances[it_id]),
-                'valuation_rate': float(row.valuation_rate),
-                'balance_value': float(running_balances[it_id] * row.valuation_rate)
+                'balance_qty': float(bal_qty),
+                'valuation_rate': float(rate),
+                'balance_value': float(bal_value)
             })
 
-        # યુઝરને જોવા માટે નવી એન્ટ્રી ઉપર દેખાય તે માટે રિવર્સ કરી આપો
+        # યુઝરને જોવા માટે નવી એન્ટ્રી ઉપર દેખાય તે માટે રિવર્સ
         report.reverse()
         return Response(report)
