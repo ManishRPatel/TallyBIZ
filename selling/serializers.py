@@ -193,7 +193,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                     valuation_rate=val_rate
                 )
 
-        tax_rate = Decimal(str(instance.tax_rate if hasattr(instance, 'tax_rate') and instance.tax_rate else '18')) / Decimal('100')
+        tax_rate = Decimal(str(instance.tax_rate if instance.tax_rate is not None else '18')) / Decimal('100')
         instance.net_total = net_total
         instance.tax_amount = (net_total * tax_rate).quantize(Decimal('0.01'))
         instance.grand_total = instance.net_total + instance.tax_amount

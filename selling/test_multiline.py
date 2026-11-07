@@ -4,6 +4,7 @@ Run with: .venv/Scripts/python.exe manage.py test selling
 Uses Django's separate test database, so db.sqlite3 is untouched.
 """
 from rest_framework.test import APITestCase
+from django.db.models import Sum
 
 from selling.models import Customer, SalesInvoice
 from buying.models import Supplier, PurchaseInvoice
@@ -39,7 +40,7 @@ class MultiLineInvoiceTests(APITestCase):
         inv = SalesInvoice.objects.get(invoice_number='INV-9001')
         self.assertEqual(inv.items.count(), 2, 'both lines must be created')
         self.assertEqual(StockLedgerEntry.objects.filter(voucher_no='INV-9001').count(), 2)
-        self.assertEqual(GLEntry.objects.filter(voucher_no='INV-9001').count(), 3)  # Debtors, Sales, Output GST
+        self.assertEqual(GLEntry.objects.filter(voucher_no='INV-9001').count(), 4)  # Debtors, Sales, CGST, SGST
 
         # Edit: change quantities AND rates. The old frontend only ever sent
         # items[0], which silently dropped every other line on save.
@@ -119,3 +120,46 @@ class MultiLineInvoiceTests(APITestCase):
         res = self.client.get('/api/accounts/financial-statements/')
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['gst']['output_liability'], 1000.0)
+
+    def test_sales_invoice_uses_selected_tax_rate(self):
+        response = self.client.post('/api/selling/invoices/', {
+            'invoice_number': 'INV-5PCT',
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'posting_date': '2026-01-05',
+            'tax_rate': '5',
+            'items': [
+                {'item': self.item_a.id, 'quantity': 1, 'rate': 100},
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.content)
+        invoice = SalesInvoice.objects.get(invoice_number='INV-5PCT')
+        self.assertEqual(invoice.tax_rate, 5)
+        self.assertEqual(invoice.tax_amount, 5)
+        self.assertEqual(invoice.grand_total, 105)
+        output_gst = GLEntry.objects.filter(
+            voucher_no='INV-5PCT', account='Output GST'
+        ).aggregate(total=Sum('credit'))['total']
+        self.assertEqual(output_gst, 5)
+
+        response = self.client.put(f'/api/selling/invoices/{invoice.id}/', {
+            'invoice_number': invoice.invoice_number,
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'posting_date': '2026-01-05',
+            'tax_rate': '12',
+            'items': [
+                {'item': self.item_a.id, 'quantity': 1, 'rate': 100},
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.tax_rate, 12)
+        self.assertEqual(invoice.tax_amount, 12)
+        self.assertEqual(invoice.grand_total, 112)
+        output_gst = GLEntry.objects.filter(
+            voucher_no='INV-5PCT', account='Output GST'
+        ).aggregate(total=Sum('credit'))['total']
+        self.assertEqual(output_gst, 12)

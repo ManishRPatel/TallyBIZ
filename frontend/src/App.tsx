@@ -412,6 +412,7 @@ export default function App() {
       customer_name: customerName,
       posting_date: invoiceForm.posting_date,
       due_date: invoiceForm.due_date,
+      tax_rate: taxRate.toFixed(2),
       net_total: net.toFixed(2),
       tax_amount: tax.toFixed(2),
       grand_total: grand.toFixed(2),

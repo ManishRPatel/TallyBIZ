@@ -38,6 +38,7 @@ class SalesInvoice(models.Model):
     due_date = models.DateField(null=True, blank=True)
     
     net_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('18.00'))
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     
