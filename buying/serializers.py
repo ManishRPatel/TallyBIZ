@@ -14,9 +14,17 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 
 class PurchaseInvoiceItemSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+    discount_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, default=0.0)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0.0)
+    is_foc = serializers.BooleanField(required=False, default=False)
+
     class Meta:
         model = PurchaseInvoiceItem
-        fields = ['id', 'item', 'quantity', 'rate', 'amount']
+        fields = [
+            'id', 'item', 'quantity', 'rate', 
+            'discount_percentage', 'discount_amount', 'is_foc', 'amount'
+        ]
 
 
 class PurchaseInvoiceSerializer(serializers.ModelSerializer):
@@ -41,21 +49,32 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     def validate(self, data):
         items_data = data.get('items')
 
-        # Defect #2 Fix: Items હોવા ફરજિયાત છે
         if self.instance is None and (not items_data or len(items_data) == 0):
             raise serializers.ValidationError({"items": "At least one line item is required."})
 
         if items_data:
+            calc_net = Decimal('0.00')
             for row in items_data:
-                qty = Decimal(str(row['quantity']))
-                rate = Decimal(str(row['rate']))
+                qty = Decimal(str(row.get('quantity', 0)))
+                is_foc = row.get('is_foc', False)
+                rate = Decimal('0.00') if is_foc else Decimal(str(row.get('rate', 0)))
+                disc_pct = Decimal('0.00') if is_foc else Decimal(str(row.get('discount_percentage', 0)))
+
                 if qty <= Decimal('0.00'):
                     raise serializers.ValidationError({"items": "Quantity must be greater than zero."})
                 if rate < Decimal('0.00'):
                     raise serializers.ValidationError({"items": "Rate cannot be negative."})
 
-            # Defect #4 Fix: Net Total અને Grand Total ની ગણતરી બેકએન્ડ પર ચોકસાઈથી સેટ કરો
-            calc_net = sum(Decimal(str(r['quantity'])) * Decimal(str(r['rate'])) for r in items_data)
+                base_amt = qty * rate
+                disc_amt = (base_amt * (disc_pct / Decimal('100'))).quantize(Decimal('0.01'))
+                line_net = max(Decimal('0.00'), base_amt - disc_amt)
+
+                row['rate'] = rate
+                row['discount_percentage'] = disc_pct
+                row['discount_amount'] = disc_amt
+                row['amount'] = line_net
+                calc_net += line_net
+
             tax_amt = Decimal(str(data.get('tax_amount', 0)))
             calc_grand = calc_net + tax_amt
 
@@ -73,8 +92,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             item_obj.current_stock = new_stock
             item_obj.save()
 
-            rate = Decimal(str(item_data.get('rate', 0)))
-            val_rate = rate if rate > Decimal('0.00') else item_obj.standard_rate
+            # જો ડિસ્કાઉન્ટ હોય તો અસરકારક યુનિટ રેટ, અથવા FOC હોય તો standard_rate વાપરો
+            line_amt = Decimal(str(item_data.get('amount', 0)))
+            effective_rate = (line_amt / qty).quantize(Decimal('0.01')) if qty > Decimal('0.00') else Decimal('0.00')
+            val_rate = effective_rate if effective_rate > Decimal('0.00') else item_obj.standard_rate
 
             StockLedgerEntry.objects.create(
                 posting_date=invoice.posting_date,
@@ -140,7 +161,6 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items', None)
 
-        # જો items ન મોકલ્યા હોય તો update અટકાવો (Defect #2 Fix)
         if items_data is None:
             raise serializers.ValidationError({"items": "Items list is required for purchase bill update."})
 

@@ -256,31 +256,49 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
               <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
                 <th style={{ padding: '8px 10px', textAlign: 'left', width: '30px' }}>#</th>
                 <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item Description</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '70px' }}>Qty</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '90px' }}>Rate (Rs.)</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '120px' }}>Amount (Rs.)</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '60px' }}>Qty</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Rate (Rs.)</th>
+                <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '100px' }}>Amount (Rs.)</th>
               </tr>
             </thead>
             <tbody>
               {invoice.items && invoice.items.length > 0 ? (
                 invoice.items.map((itemRow, idx) => {
                   const masterItem = itemsMaster.find(m => m.id === itemRow.item);
+                  const isFoc = (itemRow as any).is_foc;
+                  const discPct = parseFloat((itemRow as any).discount_percentage || '0');
+
                   return (
                     <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                       <td style={{ padding: '8px 10px' }}>{idx + 1}</td>
                       <td style={{ padding: '8px 10px' }}>
-                        <strong>{masterItem ? masterItem.item_name : `Item #${itemRow.item}`}</strong>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <strong>{masterItem ? masterItem.item_name : `Item #${itemRow.item}`}</strong>
+                          {isFoc && (
+                            <span style={{ background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>
+                              FOC / Sample
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: '11px', color: '#64748b' }}>Code: {masterItem?.item_code || '-'} | Unit: {masterItem?.unit || 'Nos'}</div>
                       </td>
                       <td style={{ padding: '8px 10px', textAlign: 'right' }}>{itemRow.quantity}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>Rs. {parseFloat(itemRow.rate.toString()).toFixed(2)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600' }}>Rs. {parseFloat(itemRow.amount.toString()).toFixed(2)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                        {isFoc ? '0.00' : parseFloat(itemRow.rate.toString()).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        {discPct > 0 ? `${discPct}%` : '-'}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600' }}>
+                        Rs. {parseFloat(itemRow.amount.toString()).toFixed(2)}
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={5} style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No items listed</td>
+                  <td colSpan={6} style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No items listed</td>
                 </tr>
               )}
             </tbody>
