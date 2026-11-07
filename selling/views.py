@@ -17,7 +17,28 @@ class CustomerRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView
 
 class CreditNoteListCreateAPIView(generics.ListCreateAPIView):
     queryset = CreditNote.objects.all().order_by('-id')
-    serializer_class = CreditNoteSerializer    
+    serializer_class = CreditNoteSerializer
+
+
+class CreditNoteRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = CreditNote.objects.prefetch_related('items__item')
+    serializer_class = CreditNoteSerializer
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        for item_row in instance.items.select_related('item'):
+            item_row.item.current_stock -= item_row.quantity
+            item_row.item.save(update_fields=['current_stock'])
+
+        StockLedgerEntry.objects.filter(
+            voucher_type='Credit Note',
+            voucher_no=instance.credit_note_number
+        ).delete()
+        GLEntry.objects.filter(
+            voucher_type='Credit Note',
+            voucher_no=instance.credit_note_number
+        ).delete()
+        instance.delete()
 
 class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
     queryset = SalesInvoice.objects.all().order_by('-posting_date', '-invoice_number')

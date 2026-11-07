@@ -198,10 +198,68 @@ class DebitNoteSerializer(serializers.ModelSerializer):
         model = DebitNote
         fields = '__all__'
 
-    @transaction.atomic
-    def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        
+    def validate(self, attrs):
+        invoice = attrs.get(
+            'purchase_invoice',
+            self.instance.purchase_invoice if self.instance else None
+        )
+        if invoice is None:
+            return attrs
+
+        invoiced_quantities = {}
+        for invoice_item in invoice.items.all():
+            invoiced_quantities[invoice_item.item_id] = (
+                invoiced_quantities.get(invoice_item.item_id, Decimal('0'))
+                + invoice_item.quantity
+            )
+
+        returned_quantities = {}
+        existing_notes = DebitNote.objects.filter(purchase_invoice=invoice)
+        if self.instance:
+            existing_notes = existing_notes.exclude(pk=self.instance.pk)
+        for note_item in DebitNoteItem.objects.filter(debit_note__in=existing_notes):
+            returned_quantities[note_item.item_id] = (
+                returned_quantities.get(note_item.item_id, Decimal('0'))
+                + note_item.quantity
+            )
+
+        items_data = attrs.get('items')
+        if items_data is None:
+            if not self.instance:
+                return attrs
+            items_data = [
+                {'item': note_item.item, 'quantity': note_item.quantity}
+                for note_item in self.instance.items.select_related('item')
+            ]
+
+        requested_quantities = {}
+        for item_data in items_data:
+            item_obj = item_data['item']
+            requested_quantities[item_obj.id] = (
+                requested_quantities.get(item_obj.id, Decimal('0'))
+                + item_data['quantity']
+            )
+
+        errors = []
+        for item_id, requested_quantity in requested_quantities.items():
+            invoice_quantity = invoiced_quantities.get(item_id, Decimal('0'))
+            already_returned = returned_quantities.get(item_id, Decimal('0'))
+            remaining_quantity = invoice_quantity - already_returned
+            if requested_quantity > remaining_quantity:
+                item_name = next(
+                    item_data['item'].item_name
+                    for item_data in items_data
+                    if item_data['item'].id == item_id
+                )
+                errors.append(
+                    f'{item_name}: requested return quantity {requested_quantity} '
+                    f'exceeds the remaining invoice quantity {remaining_quantity}.'
+                )
+        if errors:
+            raise serializers.ValidationError({'items': errors})
+        return attrs
+
+    def _save_entries(self, debit_note, items_data, replacing=False):
         net_total = Decimal('0.00')
         for item in items_data:
             line_amt = Decimal(str(item['quantity'])) * Decimal(str(item['rate']))
@@ -211,21 +269,26 @@ class DebitNoteSerializer(serializers.ModelSerializer):
         tax_amount = (net_total * Decimal('0.18')).quantize(Decimal('0.01'))
         grand_total = net_total + tax_amount
 
-        debit_note = DebitNote.objects.create(
-            net_total=net_total,
-            tax_amount=tax_amount,
-            grand_total=grand_total,
-            status='Submitted',
-            **validated_data
-        )
+        if replacing:
+            for old_item in debit_note.items.select_related('item'):
+                old_item.item.current_stock += old_item.quantity
+                old_item.item.save(update_fields=['current_stock'])
+
+            StockLedgerEntry.objects.filter(
+                voucher_type='Debit Note',
+                voucher_no=debit_note.debit_note_number
+            ).delete()
+            GLEntry.objects.filter(
+                voucher_type='Debit Note',
+                voucher_no=debit_note.debit_note_number
+            ).delete()
+            debit_note.items.all().delete()
 
         for item_data in items_data:
             DebitNoteItem.objects.create(debit_note=debit_note, **item_data)
-            
-            # Stock Outward (Purchase Return માઇનસ થશે) સાથે લોક
             item_obj = Item.objects.select_for_update().get(id=item_data['item'].id)
             item_obj.current_stock -= item_data['quantity']
-            item_obj.save()
+            item_obj.save(update_fields=['current_stock'])
 
             StockLedgerEntry.objects.create(
                 posting_date=debit_note.posting_date,
@@ -237,7 +300,12 @@ class DebitNoteSerializer(serializers.ModelSerializer):
                 valuation_rate=item_obj.standard_rate
             )
 
-        # GL Entries for Debit Note (Creditors & Purchase Return)
+        debit_note.net_total = net_total
+        debit_note.tax_amount = tax_amount
+        debit_note.grand_total = grand_total
+        debit_note.status = 'Submitted'
+        debit_note.save()
+
         gl_map = [
             {
                 "posting_date": debit_note.posting_date,
@@ -250,6 +318,18 @@ class DebitNoteSerializer(serializers.ModelSerializer):
                 "debit": debit_note.grand_total,
                 "credit": Decimal('0.00'),
                 "remarks": f"Debit note reduction for {debit_note.debit_note_number}"
+            },
+            {
+                "posting_date": debit_note.posting_date,
+                "account": "Input GST",
+                "party_type": None,
+                "party": None,
+                "voucher_type": "Debit Note",
+                "voucher_no": debit_note.debit_note_number,
+                "against": debit_note.supplier_name,
+                "debit": Decimal('0.00'),
+                "credit": debit_note.tax_amount,
+                "remarks": f"Input GST reversal for {debit_note.debit_note_number}"
             },
             {
                 "posting_date": debit_note.posting_date,
@@ -266,4 +346,46 @@ class DebitNoteSerializer(serializers.ModelSerializer):
         ]
         make_gl_entries(gl_map)
         return debit_note
+
+    @transaction.atomic
+    def create(self, validated_data):
+        invoice = validated_data.get('purchase_invoice')
+        if invoice:
+            PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
+        self.validate(validated_data)
+        items_data = validated_data.pop('items')
+        debit_note = DebitNote.objects.create(**validated_data)
+        return self._save_entries(debit_note, items_data)
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        invoice = validated_data.get('purchase_invoice', instance.purchase_invoice)
+        if invoice:
+            PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
+        self.validate(validated_data)
+        items_data = validated_data.pop('items', None)
+        if items_data is None:
+            items_data = [
+                {
+                    'item': item.item,
+                    'quantity': item.quantity,
+                    'rate': item.rate
+                }
+                for item in instance.items.all()
+            ]
+        old_note_number = instance.debit_note_number
+        new_note_number = validated_data.get('debit_note_number', old_note_number)
+        if new_note_number != old_note_number:
+            StockLedgerEntry.objects.filter(
+                voucher_type='Debit Note',
+                voucher_no=old_note_number
+            ).delete()
+            GLEntry.objects.filter(
+                voucher_type='Debit Note',
+                voucher_no=old_note_number
+            ).delete()
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        return self._save_entries(instance, items_data, replacing=True)
     

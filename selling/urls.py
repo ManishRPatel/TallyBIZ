@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     CreditNoteListCreateAPIView,
+    CreditNoteRetrieveUpdateDestroyAPIView,
     CustomerListCreateAPIView, 
     CustomerRetrieveUpdateDestroyAPIView,
     SalesInvoiceListCreateAPIView, 
@@ -13,4 +14,5 @@ urlpatterns = [
     path('invoices/', SalesInvoiceListCreateAPIView.as_view(), name='sales-invoice-list-create'),
     path('invoices/<int:pk>/', SalesInvoiceRetrieveUpdateDestroyAPIView.as_view(), name='sales-invoice-detail'),
     path('credit-notes/', CreditNoteListCreateAPIView.as_view(), name='credit-note-list-create'),
+    path('credit-notes/<int:pk>/', CreditNoteRetrieveUpdateDestroyAPIView.as_view(), name='credit-note-detail'),
 ]

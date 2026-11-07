@@ -295,10 +295,68 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         model = CreditNote
         fields = '__all__'
 
-    @transaction.atomic
-    def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        
+    def validate(self, attrs):
+        invoice = attrs.get(
+            'sales_invoice',
+            self.instance.sales_invoice if self.instance else None
+        )
+        if invoice is None:
+            return attrs
+
+        invoiced_quantities = {}
+        for invoice_item in invoice.items.all():
+            invoiced_quantities[invoice_item.item_id] = (
+                invoiced_quantities.get(invoice_item.item_id, Decimal('0'))
+                + invoice_item.quantity
+            )
+
+        returned_quantities = {}
+        existing_notes = CreditNote.objects.filter(sales_invoice=invoice)
+        if self.instance:
+            existing_notes = existing_notes.exclude(pk=self.instance.pk)
+        for note_item in CreditNoteItem.objects.filter(credit_note__in=existing_notes):
+            returned_quantities[note_item.item_id] = (
+                returned_quantities.get(note_item.item_id, Decimal('0'))
+                + note_item.quantity
+            )
+
+        items_data = attrs.get('items')
+        if items_data is None:
+            if not self.instance:
+                return attrs
+            items_data = [
+                {'item': note_item.item, 'quantity': note_item.quantity}
+                for note_item in self.instance.items.select_related('item')
+            ]
+
+        requested_quantities = {}
+        for item_data in items_data:
+            item_obj = item_data['item']
+            requested_quantities[item_obj.id] = (
+                requested_quantities.get(item_obj.id, Decimal('0'))
+                + item_data['quantity']
+            )
+
+        errors = []
+        for item_id, requested_quantity in requested_quantities.items():
+            invoice_quantity = invoiced_quantities.get(item_id, Decimal('0'))
+            already_returned = returned_quantities.get(item_id, Decimal('0'))
+            remaining_quantity = invoice_quantity - already_returned
+            if requested_quantity > remaining_quantity:
+                item_name = next(
+                    item_data['item'].item_name
+                    for item_data in items_data
+                    if item_data['item'].id == item_id
+                )
+                errors.append(
+                    f'{item_name}: requested return quantity {requested_quantity} '
+                    f'exceeds the remaining invoice quantity {remaining_quantity}.'
+                )
+        if errors:
+            raise serializers.ValidationError({'items': errors})
+        return attrs
+
+    def _save_entries(self, credit_note, items_data, replacing=False):
         net_total = Decimal('0.00')
         for item in items_data:
             line_amt = Decimal(str(item['quantity'])) * Decimal(str(item['rate']))
@@ -308,21 +366,26 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         tax_amount = (net_total * Decimal('0.18')).quantize(Decimal('0.01'))
         grand_total = net_total + tax_amount
 
-        credit_note = CreditNote.objects.create(
-            net_total=net_total,
-            tax_amount=tax_amount,
-            grand_total=grand_total,
-            status='Submitted',
-            **validated_data
-        )
+        if replacing:
+            for old_item in credit_note.items.select_related('item'):
+                old_item.item.current_stock -= old_item.quantity
+                old_item.item.save(update_fields=['current_stock'])
+
+            StockLedgerEntry.objects.filter(
+                voucher_type='Credit Note',
+                voucher_no=credit_note.credit_note_number
+            ).delete()
+            GLEntry.objects.filter(
+                voucher_type='Credit Note',
+                voucher_no=credit_note.credit_note_number
+            ).delete()
+            credit_note.items.all().delete()
 
         for item_data in items_data:
             CreditNoteItem.objects.create(credit_note=credit_note, **item_data)
-            
-            # Stock Inward (Sales Return વતા થશે) સાથે લોક
             item_obj = Item.objects.select_for_update().get(id=item_data['item'].id)
             item_obj.current_stock += item_data['quantity']
-            item_obj.save()
+            item_obj.save(update_fields=['current_stock'])
 
             StockLedgerEntry.objects.create(
                 posting_date=credit_note.posting_date,
@@ -334,7 +397,12 @@ class CreditNoteSerializer(serializers.ModelSerializer):
                 valuation_rate=item_obj.standard_rate
             )
 
-        # GL Entries for Credit Note (Sales Return & Debtors)
+        credit_note.net_total = net_total
+        credit_note.tax_amount = tax_amount
+        credit_note.grand_total = grand_total
+        credit_note.status = 'Submitted'
+        credit_note.save()
+
         gl_map = [
             {
                 "posting_date": credit_note.posting_date,
@@ -347,6 +415,18 @@ class CreditNoteSerializer(serializers.ModelSerializer):
                 "debit": credit_note.net_total,
                 "credit": Decimal('0.00'),
                 "remarks": f"Sales Return from {credit_note.customer_name}"
+            },
+            {
+                "posting_date": credit_note.posting_date,
+                "account": "Output GST",
+                "party_type": None,
+                "party": None,
+                "voucher_type": "Credit Note",
+                "voucher_no": credit_note.credit_note_number,
+                "against": credit_note.customer_name,
+                "debit": credit_note.tax_amount,
+                "credit": Decimal('0.00'),
+                "remarks": f"Output GST reversal for {credit_note.credit_note_number}"
             },
             {
                 "posting_date": credit_note.posting_date,
@@ -363,3 +443,45 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         ]
         make_gl_entries(gl_map)
         return credit_note
+
+    @transaction.atomic
+    def create(self, validated_data):
+        invoice = validated_data.get('sales_invoice')
+        if invoice:
+            SalesInvoice.objects.select_for_update().get(pk=invoice.pk)
+        self.validate(validated_data)
+        items_data = validated_data.pop('items')
+        credit_note = CreditNote.objects.create(**validated_data)
+        return self._save_entries(credit_note, items_data)
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        invoice = validated_data.get('sales_invoice', instance.sales_invoice)
+        if invoice:
+            SalesInvoice.objects.select_for_update().get(pk=invoice.pk)
+        self.validate(validated_data)
+        items_data = validated_data.pop('items', None)
+        if items_data is None:
+            items_data = [
+                {
+                    'item': item.item,
+                    'quantity': item.quantity,
+                    'rate': item.rate
+                }
+                for item in instance.items.all()
+            ]
+        old_note_number = instance.credit_note_number
+        new_note_number = validated_data.get('credit_note_number', old_note_number)
+        if new_note_number != old_note_number:
+            StockLedgerEntry.objects.filter(
+                voucher_type='Credit Note',
+                voucher_no=old_note_number
+            ).delete()
+            GLEntry.objects.filter(
+                voucher_type='Credit Note',
+                voucher_no=old_note_number
+            ).delete()
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        return self._save_entries(instance, items_data, replacing=True)

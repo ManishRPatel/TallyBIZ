@@ -22,6 +22,27 @@ class DebitNoteListCreateAPIView(generics.ListCreateAPIView):
     queryset = DebitNote.objects.all().order_by('-id')
     serializer_class = DebitNoteSerializer
 
+
+class DebitNoteRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = DebitNote.objects.prefetch_related('items__item')
+    serializer_class = DebitNoteSerializer
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        for item_row in instance.items.select_related('item'):
+            item_row.item.current_stock += item_row.quantity
+            item_row.item.save(update_fields=['current_stock'])
+
+        StockLedgerEntry.objects.filter(
+            voucher_type='Debit Note',
+            voucher_no=instance.debit_note_number
+        ).delete()
+        GLEntry.objects.filter(
+            voucher_type='Debit Note',
+            voucher_no=instance.debit_note_number
+        ).delete()
+        instance.delete()
+
 # --- PURCHASE INVOICE VIEWS ---
 class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):
     queryset = PurchaseInvoice.objects.all().order_by('-posting_date', '-bill_number')

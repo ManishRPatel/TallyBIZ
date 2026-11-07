@@ -6,8 +6,8 @@ Uses Django's separate test database, so db.sqlite3 is untouched.
 from rest_framework.test import APITestCase
 from django.db.models import Sum
 
-from selling.models import Customer, SalesInvoice
-from buying.models import Supplier, PurchaseInvoice
+from selling.models import CreditNote, Customer, SalesInvoice, SalesInvoiceItem
+from buying.models import DebitNote, Supplier, PurchaseInvoice, PurchaseInvoiceItem
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry, PaymentEntry
 
@@ -163,3 +163,231 @@ class MultiLineInvoiceTests(APITestCase):
             voucher_no='INV-5PCT', account='Output GST'
         ).aggregate(total=Sum('credit'))['total']
         self.assertEqual(output_gst, 12)
+
+    def test_credit_note_posts_balanced_gst_reversal(self):
+        invoice = SalesInvoice.objects.create(
+            invoice_number='INV-CN-9001',
+            customer=self.customer,
+            customer_name=self.customer.customer_name,
+            posting_date='2026-01-04',
+        )
+        SalesInvoiceItem.objects.create(
+            invoice=invoice, item=self.item_a, quantity=1, rate=20000
+        )
+        response = self.client.post('/api/selling/credit-notes/', {
+            'credit_note_number': 'CN-9001',
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'sales_invoice': invoice.id,
+            'reason': 'Customer returned a damaged item',
+            'posting_date': '2026-01-05',
+            'items': [{'item': self.item_a.id, 'quantity': 1, 'rate': 20000}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.content)
+        note = CreditNote.objects.get(credit_note_number='CN-9001')
+        self.assertEqual(note.net_total, 20000)
+        self.assertEqual(note.tax_amount, 3600)
+        self.assertEqual(note.sales_invoice_id, invoice.id)
+        self.assertEqual(note.reason, 'Customer returned a damaged item')
+        entries = GLEntry.objects.filter(voucher_type='Credit Note', voucher_no='CN-9001')
+        totals = entries.aggregate(debit=Sum('debit'), credit=Sum('credit'))
+        self.assertEqual(totals['debit'], totals['credit'])
+        self.assertEqual(entries.get(account='Output GST').debit, 3600)
+
+    def test_debit_note_posts_balanced_gst_reversal(self):
+        invoice = PurchaseInvoice.objects.create(
+            bill_number='PUR-DN-9001',
+            supplier=self.supplier,
+            supplier_name=self.supplier.supplier_name,
+            posting_date='2026-01-04',
+        )
+        PurchaseInvoiceItem.objects.create(
+            invoice=invoice,
+            item=self.item_a,
+            quantity=1,
+            rate=20000,
+            amount=20000,
+        )
+        response = self.client.post('/api/buying/debit-notes/', {
+            'debit_note_number': 'DN-9001',
+            'supplier': self.supplier.id,
+            'supplier_name': self.supplier.supplier_name,
+            'purchase_invoice': invoice.id,
+            'reason': 'Returned damaged stock to supplier',
+            'posting_date': '2026-01-05',
+            'items': [{'item': self.item_a.id, 'quantity': 1, 'rate': 20000}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.content)
+        note = DebitNote.objects.get(debit_note_number='DN-9001')
+        self.assertEqual(note.net_total, 20000)
+        self.assertEqual(note.tax_amount, 3600)
+        self.assertEqual(note.purchase_invoice_id, invoice.id)
+        self.assertEqual(note.reason, 'Returned damaged stock to supplier')
+        entries = GLEntry.objects.filter(voucher_type='Debit Note', voucher_no='DN-9001')
+        totals = entries.aggregate(debit=Sum('debit'), credit=Sum('credit'))
+        self.assertEqual(totals['debit'], totals['credit'])
+        self.assertEqual(entries.get(account='Input GST').credit, 3600)
+
+    def test_credit_note_cannot_exceed_invoice_quantity_across_returns(self):
+        invoice = SalesInvoice.objects.create(
+            invoice_number='INV-CN-LIMIT',
+            customer=self.customer,
+            customer_name=self.customer.customer_name,
+            posting_date='2026-01-04',
+        )
+        SalesInvoiceItem.objects.create(
+            invoice=invoice, item=self.item_a, quantity=10, rate=100
+        )
+        base_payload = {
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'sales_invoice': invoice.id,
+            'posting_date': '2026-01-05',
+        }
+
+        response = self.client.post('/api/selling/credit-notes/', {
+            **base_payload,
+            'credit_note_number': 'CN-LIMIT-OVER',
+            'items': [
+                {'item': self.item_a.id, 'quantity': 6, 'rate': 100},
+                {'item': self.item_a.id, 'quantity': 5, 'rate': 100},
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+
+        response = self.client.post('/api/selling/credit-notes/', {
+            **base_payload,
+            'credit_note_number': 'CN-LIMIT-1',
+            'items': [{'item': self.item_a.id, 'quantity': 6, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+
+        response = self.client.post('/api/selling/credit-notes/', {
+            **base_payload,
+            'credit_note_number': 'CN-LIMIT-2',
+            'items': [{'item': self.item_a.id, 'quantity': 5, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+
+        note = CreditNote.objects.get(credit_note_number='CN-LIMIT-1')
+        response = self.client.put(f'/api/selling/credit-notes/{note.id}/', {
+            **base_payload,
+            'credit_note_number': 'CN-LIMIT-1',
+            'items': [{'item': self.item_a.id, 'quantity': 10, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+
+        response = self.client.put(f'/api/selling/credit-notes/{note.id}/', {
+            **base_payload,
+            'credit_note_number': 'CN-LIMIT-1',
+            'items': [{'item': self.item_a.id, 'quantity': 11, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_debit_note_cannot_exceed_invoice_quantity_across_returns(self):
+        invoice = PurchaseInvoice.objects.create(
+            bill_number='PUR-DN-LIMIT',
+            supplier=self.supplier,
+            supplier_name=self.supplier.supplier_name,
+            posting_date='2026-01-04',
+        )
+        PurchaseInvoiceItem.objects.create(
+            invoice=invoice,
+            item=self.item_a,
+            quantity=10,
+            rate=100,
+            amount=1000,
+        )
+        base_payload = {
+            'supplier': self.supplier.id,
+            'supplier_name': self.supplier.supplier_name,
+            'purchase_invoice': invoice.id,
+            'posting_date': '2026-01-05',
+        }
+
+        response = self.client.post('/api/buying/debit-notes/', {
+            **base_payload,
+            'debit_note_number': 'DN-LIMIT-OVER',
+            'items': [{'item': self.item_a.id, 'quantity': 11, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+
+        response = self.client.post('/api/buying/debit-notes/', {
+            **base_payload,
+            'debit_note_number': 'DN-LIMIT-1',
+            'items': [{'item': self.item_a.id, 'quantity': 6, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+
+        response = self.client.post('/api/buying/debit-notes/', {
+            **base_payload,
+            'debit_note_number': 'DN-LIMIT-2',
+            'items': [{'item': self.item_a.id, 'quantity': 5, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_credit_note_can_be_updated_and_deleted(self):
+        response = self.client.post('/api/selling/credit-notes/', {
+            'credit_note_number': 'CN-EDIT',
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'posting_date': '2026-01-05',
+            'items': [{'item': self.item_a.id, 'quantity': 1, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        note_id = response.json()['id']
+
+        response = self.client.put(f'/api/selling/credit-notes/{note_id}/', {
+            'credit_note_number': 'CN-EDITED',
+            'customer': self.customer.id,
+            'customer_name': self.customer.customer_name,
+            'posting_date': '2026-01-06',
+            'items': [{'item': self.item_a.id, 'quantity': 2, 'rate': 150}],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.item_a.refresh_from_db()
+        self.assertEqual(self.item_a.current_stock, 502)
+        self.assertEqual(StockLedgerEntry.objects.filter(voucher_type='Credit Note').count(), 1)
+        self.assertFalse(GLEntry.objects.filter(voucher_type='Credit Note', voucher_no='CN-EDIT').exists())
+        self.assertEqual(GLEntry.objects.filter(voucher_type='Credit Note', voucher_no='CN-EDITED').count(), 3)
+
+        response = self.client.delete(f'/api/selling/credit-notes/{note_id}/')
+        self.assertEqual(response.status_code, 204, response.content)
+        self.item_a.refresh_from_db()
+        self.assertEqual(self.item_a.current_stock, 500)
+        self.assertFalse(StockLedgerEntry.objects.filter(voucher_type='Credit Note').exists())
+        self.assertFalse(GLEntry.objects.filter(voucher_type='Credit Note').exists())
+
+    def test_debit_note_can_be_updated_and_deleted(self):
+        response = self.client.post('/api/buying/debit-notes/', {
+            'debit_note_number': 'DN-EDIT',
+            'supplier': self.supplier.id,
+            'supplier_name': self.supplier.supplier_name,
+            'posting_date': '2026-01-05',
+            'items': [{'item': self.item_a.id, 'quantity': 1, 'rate': 100}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        note_id = response.json()['id']
+
+        response = self.client.put(f'/api/buying/debit-notes/{note_id}/', {
+            'debit_note_number': 'DN-EDITED',
+            'supplier': self.supplier.id,
+            'supplier_name': self.supplier.supplier_name,
+            'posting_date': '2026-01-06',
+            'items': [{'item': self.item_a.id, 'quantity': 2, 'rate': 150}],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.item_a.refresh_from_db()
+        self.assertEqual(self.item_a.current_stock, 498)
+        self.assertEqual(StockLedgerEntry.objects.filter(voucher_type='Debit Note').count(), 1)
+        self.assertFalse(GLEntry.objects.filter(voucher_type='Debit Note', voucher_no='DN-EDIT').exists())
+        self.assertEqual(GLEntry.objects.filter(voucher_type='Debit Note', voucher_no='DN-EDITED').count(), 3)
+
+        response = self.client.delete(f'/api/buying/debit-notes/{note_id}/')
+        self.assertEqual(response.status_code, 204, response.content)
+        self.item_a.refresh_from_db()
+        self.assertEqual(self.item_a.current_stock, 500)
+        self.assertFalse(StockLedgerEntry.objects.filter(voucher_type='Debit Note').exists())
+        self.assertFalse(GLEntry.objects.filter(voucher_type='Debit Note').exists())

@@ -23,6 +23,7 @@ import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard,
 import { X, RefreshCw, Layers } from 'lucide-react';
 import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
 import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, type DashboardSummary, type LineForm } from './utils/erpHelpers';
+import ReturnsTab from './components/tabs/ReturnsTab';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' |  'ReturnsTab'  | 'reports' | 'gst'>('selling');
@@ -556,7 +557,7 @@ export default function App() {
           <button onClick={() => setActiveTab('payments')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'payments' ? '#1e293b' : 'transparent', color: activeTab === 'payments' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <CreditCard size={18} /> Payments
           </button>
-          <button onClick={() => setActiveTab('ReturnsTab')}>
+          <button onClick={() => setActiveTab('ReturnsTab')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'ReturnsTab' ? '#1e293b' : 'transparent', color: activeTab === 'ReturnsTab' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <CreditCard size={18} /> Credit & Debit Notes
           </button>
           <button onClick={() => setActiveTab('stock')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock' ? '#1e293b' : 'transparent', color: activeTab === 'stock' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
@@ -578,7 +579,7 @@ export default function App() {
       </aside>
 
       {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto' }}>
+      <main style={{ flex: 1, minWidth: 0, padding: '36px 40px', overflowY: 'auto' }}>
         {loadError && (
           <div
             role="alert"
@@ -739,6 +740,9 @@ export default function App() {
             }}
           />
         )}
+
+        {/* TAB 11: RETURNS */}
+        {activeTab === 'ReturnsTab' && <ReturnsTab />}
       </main>
 
       {/* Invoice Print Modal */}
